@@ -2,6 +2,27 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
+
+
+def git_candidates():
+    """Installed Windows Git locations when an IDE inherited an old PATH."""
+    if os.name != 'nt':
+        return []
+    return [Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Git/cmd/git.exe',
+            Path(os.environ.get('ProgramFiles(x86)', 'C:/Program Files (x86)'))/'Git/cmd/git.exe',
+            Path.home()/'AppData/Local/Programs/Git/cmd/git.exe',
+            Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/native/git/cmd/git.exe']
+
+
+def resolve_git():
+    executable = shutil.which('git')
+    if executable:
+        return executable
+    for candidate in git_candidates():
+        if candidate.is_file():
+            return str(candidate)
+    raise RuntimeError('Git executable not found. Install Git for Windows, add it to PATH and restart VS Code.')
 
 class GitPublisher:
     def __init__(self, root, remote, branch=None, timeout=120):
@@ -10,7 +31,7 @@ class GitPublisher:
 
     def git(self, *args, check=True):
         env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='never')
-        result = subprocess.run(['git', '-C', str(self.root), *args], capture_output=True, text=True,
+        result = subprocess.run([resolve_git(), '-C', str(self.root), *args], capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', env=env, timeout=self.timeout)
         if check and result.returncode:
             # Do not echo arbitrary credential-bearing remote/hook output.

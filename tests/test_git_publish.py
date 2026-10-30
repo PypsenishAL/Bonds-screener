@@ -40,3 +40,17 @@ class GitTests(unittest.TestCase):
   self.assertEqual(self.g.preflight(pending={'tree':tree}),(base,base))
   (p/'test').write_text('changed')
   with self.assertRaises(RuntimeError): self.g.preflight(pending={'tree':tree})
+
+class GitDiscoveryTests(unittest.TestCase):
+ def test_resolves_existing_fallback_without_path(self):
+  from unittest.mock import patch
+  from moex_bonds.publication.git_publish import resolve_git
+  with tempfile.TemporaryDirectory() as d:
+   executable=Path(d)/'git.exe'; executable.write_bytes(b'fixture')
+   with patch('moex_bonds.publication.git_publish.shutil.which',return_value=None), patch('moex_bonds.publication.git_publish.git_candidates',return_value=[executable]):
+    self.assertEqual(resolve_git(),str(executable))
+ def test_missing_git_actionable(self):
+  from unittest.mock import patch
+  from moex_bonds.publication.git_publish import resolve_git
+  with patch('moex_bonds.publication.git_publish.shutil.which',return_value=None), patch('moex_bonds.publication.git_publish.git_candidates',return_value=[]):
+   with self.assertRaisesRegex(RuntimeError,'Git.*PATH'): resolve_git()
