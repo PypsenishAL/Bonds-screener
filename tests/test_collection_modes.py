@@ -198,3 +198,19 @@ class CollectionModeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class EmptyDatesRetryTests(unittest.TestCase):
+ def test_transient_empty_dates_retried(self):
+  from unittest.mock import Mock
+  from moex_bonds.collection.main import latest_trade_date
+  client=Mock(); client.get.side_effect=[{'dates':block(['from','till'],[])},{'dates':block(['from','till'],[['2020-01-01','2026-10-30']])}]
+  with patch('moex_bonds.collection.main.time.sleep') as sleep:
+   self.assertEqual(latest_trade_date(client),'2026-10-30')
+  self.assertEqual(client.get.call_count,2); sleep.assert_called_once_with(6)
+ def test_persistent_empty_fails_without_date_guess(self):
+  from unittest.mock import Mock
+  from moex_bonds.collection.main import latest_trade_date
+  client=Mock(); client.get.return_value={'dates':block(['from','till'],[])}; client.records=[]
+  with patch('moex_bonds.collection.main.time.sleep'), self.assertRaisesRegex(ValueError,'dates.till'):
+   latest_trade_date(client)
+  self.assertEqual(client.get.call_count,3)

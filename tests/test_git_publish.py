@@ -41,6 +41,12 @@ class GitTests(unittest.TestCase):
   (p/'test').write_text('changed')
   with self.assertRaises(RuntimeError): self.g.preflight(pending={'tree':tree})
 
+ def test_unstaged_document_does_not_block_data_delivery(self):
+  p=self.root/'notes.md'; p.write_text('original'); self.call('add','notes.md'); self.call('commit','-m','document'); self.call('push','origin','main')
+  p.write_text('user edit')
+  self.g.preflight()
+  self.assertEqual(p.read_text(),'user edit')
+
 class GitDiscoveryTests(unittest.TestCase):
  def test_resolves_existing_fallback_without_path(self):
   from unittest.mock import patch

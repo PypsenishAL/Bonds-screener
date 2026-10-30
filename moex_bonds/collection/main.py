@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 
 import pandas as pd
 
@@ -195,8 +196,15 @@ def latest_trade_date(client, requested=None):
     """Use published MOEX dates, never a weekday/calendar guess."""
     if requested is not None:
         return requested.isoformat()
-    payload = client.get(HISTORY + '/boards/TQCB/dates.json',
-                         {'tradingsession': 3}, purpose='latest_published_date')
+    # ISS can temporarily return an empty dates block at session rollover.
+    # Its response is cached for five seconds; never guess a date from the clock.
+    for attempt in range(3):
+        payload = client.get(HISTORY + '/boards/TQCB/dates.json',
+                             {'tradingsession': 3}, purpose='latest_published_date')
+        dates = tables(payload).get('dates') if payload is not None else None
+        if dates is None or 'till' not in dates or not dates.empty or attempt == 2:
+            break
+        time.sleep(6)
     if payload is None:
         raise ValueError('Не удалось выполнить запрос торговой даты: ' + request_diagnostic(client))
     dates = tables(payload).get('dates', pd.DataFrame())

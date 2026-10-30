@@ -61,7 +61,9 @@ class GitPublisher:
             if pending.get('tree') and self.git('write-tree') != pending['tree']:
                 raise RuntimeError('Index tree differs from pending publication')
         changes = self.git('diff','--name-only').splitlines()
-        if any(not p.startswith('data/published/') for p in changes):
+        # Unstaged documentation is not executed and is never auto-staged.
+        # Keep user notes untouched without blocking the data-only commit.
+        if any(not p.startswith('data/published/') and not p.endswith('.md') for p in changes):
             raise RuntimeError('Tracked code has uncommitted changes')
         self.git('fetch','origin',self.branch)
         local = self.git('rev-parse','HEAD')
