@@ -1,0 +1,173 @@
+{
+  "mode": "day",
+  "started_at_msk": "2026-10-28T16:51:11.928832+03:00",
+  "as_of_date": "2026-10-28",
+  "args": {
+    "date": null,
+    "secids": "",
+    "output": "D:\\z\\moex_api_probe\\daily_data",
+    "timeout": 60.0,
+    "history_output": null,
+    "pause": 0.25,
+    "daily": true,
+    "csv_only": false
+  },
+  "collection_status": "ok",
+  "selected_count": 3031,
+  "scope": "Все дневные записи TQCB; итоговые фильтры применяются отдельно",
+  "history_downloaded": false,
+  "adv20_basis": "Не загружается в дневном режиме",
+  "cbr_zcyc": {
+    "status": "ok",
+    "trade_date": "2026-10-27",
+    "rows": 12,
+    "source_url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026",
+    "units": "Доходность в % годовых: 13.09 означает 13.09%; срок в годах",
+    "started_at_msk": "2026-10-28T16:51:35.200015+03:00",
+    "attempts": [
+      {
+        "attempt": 1,
+        "http_status": 200,
+        "url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026"
+      }
+    ],
+    "table_file": "cbr_zcyc.csv",
+    "finished_at_msk": "2026-10-28T16:51:35.661871+03:00"
+  },
+  "cbr_ruonia": {
+    "status": "ok",
+    "schema_version": 1,
+    "trade_date": "2026-10-27",
+    "date_from": "2026-10-20",
+    "date_to": "2026-10-27",
+    "interval": "trade_date - 7 calendar days through trade_date, both inclusive",
+    "rows": 6,
+    "latest_rate_date": "2026-10-27",
+    "lag_days": 0,
+    "has_rate_on_trade_date": true,
+    "source_url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=20.10.2026&UniDbQuery.To=27.10.2026",
+    "started_at_msk": "2026-10-28T16:51:35.200911+03:00",
+    "attempts": [
+      {
+        "attempt": 1,
+        "http_status": 200,
+        "url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=20.10.2026&UniDbQuery.To=27.10.2026"
+      }
+    ],
+    "publication_basis": "Снимок на время загрузки; дата публикации может быть позднее даты торгов",
+    "columns": [
+      {
+        "key": "trade_date",
+        "label": "Дата торгов MOEX",
+        "type": "date",
+        "unit": null
+      },
+      {
+        "key": "rate_date",
+        "label": "Дата ставки",
+        "type": "date",
+        "unit": null
+      },
+      {
+        "key": "ruonia_pct",
+        "label": "Ставка RUONIA, % годовых",
+        "type": "number",
+        "unit": "% годовых"
+      },
+      {
+        "key": "volume_bln_rub",
+        "label": "Объем сделок RUONIA, млрд руб.",
+        "type": "number",
+        "unit": "млрд руб."
+      },
+      {
+        "key": "trades_count",
+        "label": "Количество сделок, ед.",
+        "type": "integer",
+        "unit": "ед."
+      },
+      {
+        "key": "participants_count",
+        "label": "Количество участников RUONIA, совершавших сделки в данный день, ед.",
+        "type": "integer",
+        "unit": "ед."
+      },
+      {
+        "key": "min_rate_pct",
+        "label": "Минимальная процентная ставка, % годовых",
+        "type": "number",
+        "unit": "% годовых"
+      },
+      {
+        "key": "p25_rate_pct",
+        "label": "25-й процентиль по процентным ставкам, % годовых",
+        "type": "number",
+        "unit": "% годовых"
+      },
+      {
+        "key": "p75_rate_pct",
+        "label": "75-й процентиль по процентным ставкам, % годовых",
+        "type": "number",
+        "unit": "% годовых"
+      },
+      {
+        "key": "max_rate_pct",
+        "label": "Максимальная процентная ставка, % годовых",
+        "type": "number",
+        "unit": "% годовых"
+      },
+      {
+        "key": "calculation_status",
+        "label": "Статус расчета",
+        "type": "text",
+        "unit": null
+      },
+      {
+        "key": "publication_date",
+        "label": "Дата публикации",
+        "type": "date",
+        "unit": null
+      },
+      {
+        "key": "data_gaps",
+        "label": "Пропуски в источнике (имена полей)",
+        "type": "text",
+        "unit": null
+      }
+    ],
+    "table_file": "cbr_ruonia.csv",
+    "actual_date_from": "2026-10-20",
+    "actual_date_to": "2026-10-27",
+    "valid_rate_count": 6,
+    "data_gaps": {},
+    "finished_at_msk": "2026-10-28T16:51:35.584978+03:00"
+  },
+  "daily_export": {
+    "status": "ok",
+    "trade_date": "2026-10-27",
+    "as_of": "2026-10-28",
+    "source_run": "D:\\z\\moex_api_probe\\daily_data",
+    "history_update": {
+      "status": "not_initialized",
+      "output": "D:\\z\\moex_api_probe\\history_data"
+    },
+    "input_count": 3031,
+    "final_count": 242,
+    "excluded_count": 2789,
+    "smartlab_ok": 935,
+    "smartlab_errors": 2096,
+    "scope": "Все дневные записи TQCB; итоговые фильтры применяются отдельно",
+    "history_mode": "одна дата; ADV20 не загружался",
+    "rating_basis": "Текущая справка Smart-Lab; не исторический рейтинг на дату торгов",
+    "duration_basis": "Биржевая дюрация в днях; годы = дни/365; не модифицированная",
+    "subordination_basis": "По доступным типам, заголовку и описанию выпуска; полнота юридических условий не гарантируется",
+    "country_basis": "Российский выпуск: RU ISIN + corporate_bond/exchange_bond; резидентство эмитента отдельно не проверялось",
+    "xlsx_status": "ok"
+  },
+  "storage_mode": "overwrite",
+  "output_dir": "D:\\z\\moex_api_probe\\daily_data",
+  "trade_date": "2026-10-27",
+  "finished_at_msk": "2026-10-28T17:24:13.731582+03:00",
+  "day_quote_rows": 6062,
+  "calendar_rows": 21571
+}

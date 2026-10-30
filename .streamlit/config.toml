@@ -1,0 +1,19 @@
+[server]
+enableStaticServing = true
+
+[theme]
+base = "dark"
+primaryColor = "#60A5FA"
+backgroundColor = "#0F141B"
+secondaryBackgroundColor = "#171F2A"
+textColor = "#E6EDF3"
+borderColor = "#2B3746"
+baseFontSize = 14
+font = "Inter"
+greenColor = "#7CB99A"
+redColor = "#D18A8A"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/Inter.ttf"
+weight = "100 900"

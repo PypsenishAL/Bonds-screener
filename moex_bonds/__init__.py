@@ -1,0 +1,1 @@
+"""MOEX bond analysis project."""
