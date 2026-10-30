@@ -68,22 +68,74 @@ def reset_daily_output(output):
     save_marker()
 
 
+class ProcessLock:
+    """OS-owned guard plus a removable diagnostic PID marker.
+
+    The guard file stays on disk: deleting it would let concurrent processes
+    lock different file objects. Only its OS lock denotes ownership.
+    """
+    def __init__(self, marker):
+        self.marker = Path(marker)
+        self.closed = False
+        self.guard = self.marker.with_suffix(self.marker.suffix + '.guard').open('a+b')
+        if self.guard.seek(0, 2) == 0:
+            self.guard.write(b'0')
+            self.guard.flush()
+        self.guard.seek(0)
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(self.guard.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.guard.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.guard.close()
+            raise RuntimeError('Папка выгрузки занята другим запуском: ' + str(self.marker.parent)) from None
+        try:
+            self.stream = self.marker.open('w', encoding='utf-8')
+            self.stream.write(str(os.getpid()))
+            self.stream.flush()
+        except BaseException:
+            self.guard.close()
+            raise
+
+    def write(self, value):
+        self.stream.seek(0)
+        self.stream.truncate()
+        return self.stream.write(value)
+
+    def flush(self):
+        self.stream.flush()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.stream.close()
+            self.marker.unlink(missing_ok=True)
+        finally:
+            self.guard.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+def acquire_process_lock(marker):
+    return ProcessLock(marker)
+
+
 @contextmanager
 def output_lock(output):
     """One CLI writer per directory, including the whole main + CBR job group."""
     base = checked_output(output)
     base.mkdir(parents=True, exist_ok=True)
-    lock = base / '.daily_write.lock'
-    try:
-        stream = lock.open('x', encoding='utf-8')
-    except FileExistsError:
-        raise RuntimeError('Папка выгрузки занята другим запуском: ' + str(base)) from None
-    try:
-        with stream:
-            stream.write(str(os.getpid()))
+    with acquire_process_lock(base / '.daily_write.lock'):
         yield base
-    finally:
-        lock.unlink(missing_ok=True)
 
 
 def matching_daily_manifest(output, day: date):
