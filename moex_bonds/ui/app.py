@@ -1547,6 +1547,8 @@ def build_recovery_spec(history, episodes, selected=None):
         within = c.get('recovered_within_horizon')
         common['horizon_label'] = ('Достиг цели в срок' if within else 'Не восстановился за три месяца') if pd.notna(within) else (
             'Три месяца ещё не прошли' if c.get('horizon_reason')=='not_due' else 'Неизвестно: неполные наблюдения')
+        # CSV nullable numbers become NaN; inline Vega data must contain JSON null.
+        common = _records(pd.DataFrame([common]))[0]
         for r in _records(segment[['observation_date','z_bps']]): segments.append(dict(**r,**common))
         marks.append(dict(**common,observation_date=c['entry_date'],z_bps=c['entry_z_bps'],event='Начало',shape='triangle-up',filled=True))
         if has_hit:
