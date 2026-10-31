@@ -5,6 +5,7 @@ Collectors and analysis commands are never invoked by this application.
 """
 from dataclasses import dataclass
 import base64
+from functools import lru_cache
 import hashlib
 from io import BytesIO
 import json
@@ -346,6 +347,16 @@ def recovery_view(snapshot, identity):
                 episodes=cases, summary=row)
 
 
+@lru_cache(maxsize=2)
+def _parse_workbook(raw, day):
+    return read_daily(BytesIO(raw), day)[0]
+
+
+@lru_cache(maxsize=2)
+def _shared_snapshot(root, day, fingerprint):
+    return load_snapshot(root, day)
+
+
 def load_enrichment(snapshot, daily=DAILY, publication=None):
     path = Path(daily) / 'daily' / 'bonds_daily.xlsx'
     try:
@@ -360,8 +371,7 @@ def load_enrichment(snapshot, daily=DAILY, publication=None):
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != expected:
             raise DataUnavailable('Дневная книга относится к другой версии расчёта')
-        frame, _ = read_daily(BytesIO(raw), snapshot.manifest['analysis_date'])
-        return frame, ''
+        return _parse_workbook(raw, snapshot.manifest['analysis_date']).copy(), ''
     except (OSError, ValueError, KeyError, BadZipFile) as error:
         return pd.DataFrame(), str(error)
 
@@ -614,7 +624,7 @@ def assessment_details(snapshot, secid, window, basket):
                                 'Показатель':label,'Пояснение':explanation or fallback.get(field,label+' не сохранён' if kind == 'self' else 'Текущая премия не сохранена')})
     details = pd.DataFrame(records, columns=['Сравнение','Показатель','Пояснение'])
     for field in ('Процентильная аномалия', 'Аномалия по robust score', 'Основание аномальности'):
-        details[field] = details['Сравнение'].map(lambda label: criteria[label][field])
+        details[field] = details.apply(lambda r: criteria[r['Сравнение']][field] if r['Показатель'] == 'Аномальность' else '', axis=1)
     return details
 
 
@@ -629,12 +639,36 @@ def number(value, digits=1, signed=False):
         return '—'
 
 
+def turnover(value):
+    if pd.isna(value): return '—'
+    for scale,label in ((1e9,'млрд ₽'),(1e6,'млн ₽'),(1e3,'тыс. ₽')):
+        if abs(value) >= scale: return number(value/scale,1)+' '+label
+    return number(value,0)+' ₽'
+
+
+def compact_label(value):
+    if not isinstance(value,str): return '—'
+    if ': ' in value and '; ' in value:
+        values = [v.split(': ',1)[-1] for v in value.split('; ')]
+        assessed = set(values)-{'Проверка неполная','Не сохранено'}
+        return (compact_label(next(iter(assessed))) if len(assessed)==1 else 'Разные')+('*' if len(assessed)<len(set(values)) else '')
+    return {'Оба критерия':'Оба', 'Только robust score':'Robust', 'Только процентиль':'Процентиль',
+            'Выделен анализом':'Выделен', 'Недостаточно данных для вывода':'Нет вывода',
+            'Сигнал не выявлен':'Нет сигнала','Только процентиль':'Процент.'}.get(value,value)
+
+
 def style_table(frame):
     numeric = [c for c in frame if pd.api.types.is_numeric_dtype(frame[c])]
     def delta(c): return c.endswith('_delta') or c in ('change_1d_bps',)
     formats = {c:(lambda v,c=c:number(v,2 if c in ('DURATION_YEARS','YTM_WAPRICE','COUPONPERCENT','WAPRICE','member_duration','weight_pct','Дюрация, лет','Вес, %') else 1,delta(c))) for c in numeric}
     if 'basis_label' in frame:
         formats['basis_label'] = lambda v:v.replace('По аналогам','Аналоги').replace('По эмитенту','Эмитент').replace('Нет полного вывода по эмитенту','эмитент: нет вывода').replace('Нет полного вывода по аналогам','аналоги: нет вывода')
+    for c in ('adv20','VALUE_RUB','member_adv20','Оборот 20 дат, ₽'):
+        if c in frame: formats[c] = turnover
+    for c in ('anomaly_label','status_label'):
+        if c in frame: formats[c] = compact_label
+    if 'basis_label' in frame:
+        formats['basis_label'] = lambda v:' + '.join(k for text,k in [('По аналогам','Аналоги'),('По эмитенту','Эмитент')] if text in v) or 'Нет вывода'
     styled = frame.style.format(formats,na_rep='—')
     for c in numeric:
         if delta(c):
@@ -647,7 +681,7 @@ def ru_axis(digits=0):
 
 
 def table_height(count, selected=False):
-    return 35*(1+max(1,min(count,4 if selected else 8)))+2
+    return 35*9+2
 
 
 def spread_sparkline(values):
@@ -666,7 +700,8 @@ def spread_sparkline(values):
         points.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="1"/>')
     if current: segments.append(current)
     paths = ''.join('<path d="M'+' L'.join(segment)+'" fill="none"/>' for segment in segments)
-    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="28" viewBox="0 0 120 28"><g stroke="#60A5FA" fill="#60A5FA" stroke-width="1.4">'+paths+''.join(points)+'</g></svg>'
+    color = '#7CB99A' if len(finite)>1 and finite[-1]>finite[-2] else '#D18A8A' if len(finite)>1 and finite[-1]<finite[-2] else '#A8B3C2'
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="28" viewBox="0 0 120 28"><g stroke="'+color+'" fill="'+color+'" stroke-width="1.4">'+paths+''.join(points)+'</g></svg>'
     return 'data:image/svg+xml;base64,'+base64.b64encode(svg.encode()).decode()
 
 
@@ -723,7 +758,7 @@ def build_history_spec(frame, own, premium, day, basket, domain=None):
                    coverage_text=number(100*row['coverage'],0)+'%' if row.get('coverage') is not None else '—',
                    explanation=reason_text(row.get('premium_reason')) or reason_text(row.get('own_reason')))
     x = {'field':'observation_date','type':'temporal','title':None,
-         'axis':{'format':'%d.%m','labelAngle':0}, 'scale':{'nice':False}}
+         'axis':{'format':'%d.%m','labelAngle':0,'tickCount':{'interval':'month','step':1},'labelOverlap':True}, 'scale':{'nice':False,'padding':20}}
     encoded_domain = [pd.to_datetime(value,unit='ms',utc=True).isoformat() for value in domain] if domain else None
     if encoded_domain:
         x['scale']['domain'] = encoded_domain
@@ -733,7 +768,7 @@ def build_history_spec(frame, own, premium, day, basket, domain=None):
         {'field':'explanation','title':'Примечание'}]
     def panel(field, title, row, prefix):
         panel_x = {**x,'axis':{**x['axis'],'labels':field == 'premium','ticks':field == 'premium'}}
-        y = {'field':field,'type':'quantitative','title':title,'scale':{'zero':False},'axis':{'labelExpr':ru_axis()}}
+        y = {'field':field,'type':'quantitative','title':title,'scale':{'zero':False,'padding':30},'axis':{'labelExpr':ru_axis()}}
         layers = [
             {'mark':{'type':'line','color':'#60A5FA','strokeWidth':2,'invalid':'break-paths-show-domains'},
              'encoding':{'x':panel_x,'y':y}},
@@ -813,7 +848,7 @@ def scatter_spec(view, full, snapshot, identity, scope='Выборка', show_al
     plotted = plotted.copy()
     plotted['duration_text'] = plotted.DURATION_YEARS.map(lambda v:number(v,2))
     plotted['spread_text'] = plotted.z_bps.map(number)
-    plotted['turnover_text'] = plotted.adv20.map(number)
+    plotted['turnover_text'] = plotted.adv20.map(turnover)
     scale = {'zero':False}
     if not show_all and len(plotted)>2:
         lo,hi = plotted.z_bps.quantile([.01,.99]).tolist()
@@ -899,21 +934,22 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
                          format_func=lambda d:pd.Timestamp(d).strftime('%d.%m.%Y'),on_change=archive_changed)
     day = state['analysis_date']
     try:
-        token = hashlib.sha256(_guard(Path(analysis))+(Path(analysis)/'snapshots'/day/'run_manifest.json').read_bytes()).hexdigest()
-        if state.get('_snapshot_token') != token:
-            state['_snapshot'] = load_snapshot(analysis, day)
-            state['_snapshot_token'] = token
-        snapshot = state['_snapshot']
+        guard_before = _guard(Path(analysis))
+        token = hashlib.sha256(guard_before+(Path(analysis)/'snapshots'/day/'run_manifest.json').read_bytes()).hexdigest()
+        folder = Path(analysis)/'snapshots'/day
+        fingerprint = token + ''.join(hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.glob('*.csv')))
+        snapshot = _shared_snapshot(str(Path(analysis).resolve()), day, fingerprint)
+        if _guard(Path(analysis)) != guard_before:
+            raise PublicationBusy('Результаты изменились во время чтения')
+        state.pop('_snapshot', None)
     except PublicationBusy as error:
-        snapshot = state.get('_snapshot')
         st.warning(str(error))
-        if snapshot is None or snapshot.manifest['analysis_date'] != day:
-            return
+        return
     except (OSError,ValueError) as error:
         st.error(str(error))
         return
     windows = [w for w in (90,150) if w in snapshot.manifest['config']['windows']]
-    with parameters:
+    with toolbar:
         if state.get('window') not in windows:
             state['window'] = snapshot.manifest['config'].get('classification',{}).get('primary_window', windows[0])
         window = st.segmented_control('Окно, торговых дат',windows,required=True,key='window')
@@ -985,10 +1021,10 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
             cfg[field] = st.column_config.ImageColumn(LABELS[field],width=120,help='Сохранённый Z-спред за последние 30 дат снимка; разрывы означают пропуски, шкала своя для каждой строки.')
         elif field == 'MATDATE': cfg[field] = st.column_config.DateColumn(LABELS[field],format='DD.MM.YYYY')
         elif field == 'anomaly_label':
-            cfg[field] = st.column_config.TextColumn(LABELS[field], width='medium',
-                help='Процентиль, robust score или оба критерия для выбранного окна. Если результаты сравнений различаются, они перечислены отдельно.')
+            cfg[field] = st.column_config.TextColumn('Критерий', width='small',
+                help='Оба — два критерия; Robust — только robust score; Процент. — только процентиль; Разные — выводы направлений различаются; * — часть направлений недоступна. Полная расшифровка — в карточке и вкладке «Расчёт».')
         elif field in ['NAME','status_label','RATING','SECID','ISSUER','SECTOR','basis_label']:
-            cfg[field] = st.column_config.TextColumn(LABELS[field],pinned=field == 'NAME')
+            cfg[field] = st.column_config.TextColumn(LABELS[field],pinned=field == 'NAME',width='small' if field in ('basis_label','status_label') else None)
         else:
             help_text = f'Отклонение от исторической медианы за {window} торговых дат; положительное значение — выше медианы.' if field.endswith('_delta') else None
             cfg[field] = st.column_config.NumberColumn(LABELS[field],help=help_text)
@@ -1016,19 +1052,20 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     selected = full.iloc[:0] if identity is None else full[full.SECID.eq(identity[0]) & full.BOARDID.eq(identity[1])]
     st.divider()
     if identity is None:
-        st.info('Выберите облигацию в таблице или на диаграмме')
+        st.caption('Выберите облигацию в таблице или на диаграмме, чтобы открыть подробности.')
     elif selected.empty:
         st.subheader(identity[0])
         st.info('Бумаги нет в анализе за выбранную дату')
     else:
         row = selected.iloc[0]
         st.subheader(str(row.NAME))
-        basket = st.segmented_control('Премия к корзине',list(KINDS),default='peers',required=True,format_func=lambda k:KINDS[k],key='premium_basket')
+        basket = state.get('premium_basket','peers')
         values = headline_values(snapshot,identity[0],basket,window)
         history, own, premium = history_view(snapshot,identity[0],basket,window)
-        with st.container(horizontal=True):
+        metric_columns = st.columns(4)
+        with st.container():
             for index,label in enumerate(['Z-спред бумаги','Спред корзины','Текущая премия','Медиана премии']):
-                with st.container(width=220):
+                with metric_columns[index], st.container(border=True,height=110):
                     if index < 3:
                         st.metric(label,number(values[index],signed=index == 2)+' б.п.',
                                   help=['Сохранённый текущий спред выпуска.','Взвешенный спред выбранной корзины.','Спред бумаги минус спред корзины.'][index])
@@ -1039,18 +1076,25 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
                                   delta_arrow='up' if pd.notna(delta) and delta>0 else ('down' if pd.notna(delta) and delta<0 else 'off'),
                                   delta_color='green' if pd.notna(delta) and delta>0 else ('red' if pd.notna(delta) and delta<0 else 'off'),
                                   help=f'Историческая медиана премии за {window} дат; дельта — отклонение текущей премии.')
-        st.caption(f'{row.SECID} · {row.ISSUER} · {row.RATING} · {row.SECTOR} · {pd.Timestamp(day):%d.%m.%Y}')
+        st.caption(f'{row.SECID} · {row.ISSUER}')
+        with st.container(horizontal=True):
+            for badge in (str(row.RATING),str(row.SECTOR),row.status_label,row.basis_label):
+                if badge: st.badge(badge,color='gray')
+        st.segmented_control('Премия к корзине',list(KINDS),default='peers',required=True,format_func=lambda k:KINDS[k],key='premium_basket')
         if not ((view.SECID == identity[0]) & (view.BOARDID == identity[1])).any():
             st.info('Выбранная бумага вне текущего списка')
-        st.write(row.status_label + (' · '+row.basis_label if row.basis_label else ''))
         facts = (f'Z-спред: {number(row.z_bps)} б.п. · дюрация: {number(row.DURATION_YEARS,2)} лет · '
-                 f'оборот 20 дат: {number(row.adv20/1e6,2)} млн ₽ · ΔZ за день: {number(row.change_1d_bps,signed=True)} б.п.') if mode == 'Торговля' else (
+                 f'оборот 20 дат: {turnover(row.adv20)} · ΔZ за день: {number(row.change_1d_bps,signed=True)} б.п.') if mode == 'Торговля' else (
                  f'YTM: {number(row.YTM_WAPRICE,2)}% · погашение: '+(pd.Timestamp(row.MATDATE).strftime('%d.%m.%Y') if pd.notna(row.MATDATE) else '—')+
                  f' · купон: {number(row.COUPONPERCENT,2)}% / {number(row.COUPONVALUE,2)} ₽ · Z-спред: {number(row.z_bps)} б.п.')
-        st.caption(facts)
+        with st.popover('Характеристики'):
+            st.write(facts)
+            st.write('Критерий аномальности: '+row.anomaly_label)
         context = str((snapshot.manifest.get('analysis_run_id'),day,identity,window))
         full_domain = [_milliseconds(own.window_start), _milliseconds(day)]
-        if st.button('Сбросить масштаб',key='reset_history_zoom',help='Вернуть полный диапазон выбранного окна на обеих панелях'):
+        chart_title,chart_action = st.columns([3,1])
+        chart_title.markdown('#### История спреда и премии')
+        if chart_action.button('Сбросить масштаб',key='reset_history_zoom',help='Вернуть полный диапазон выбранного окна на обеих панелях'):
             state['history_domain'] = list(full_domain)
             state['history_revision'] = state.get('history_revision',0)+1
         domain = history_domain(state,context,full_domain)
@@ -1061,15 +1105,18 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
             key=chart_key,on_select=zoom_changed,selection_mode=['zoom_x'],alt='Сверху история Z-спреда бумаги, снизу её премия к выбранной корзине. Общие даты и масштаб.')
         st.caption('Сохранённые значения · '+pd.Timestamp(day).strftime('%d.%m.%Y')+f' · окно {window} дат')
         reason = reason_text(premium.get('current_reason')) or reason_text(premium.get('hist_reason'))
-        with st.expander('О расчёте'):
+        calculation_tab,recovery_tab,data_tab = st.tabs(['Расчёт','Восстановление','Данные'])
+        with calculation_tab:
             st.write('Состав и веса корзины зафиксированы на дату анализа. Масштаб не меняет окно расчёта.')
             st.write('Коридор: границы не заданы. Показаны сохранённые ряды, медианы и текущие значения.')
             if reason: st.write('Сравнение: '+reason)
             details = assessment_details(snapshot,identity[0],window,basket)
             if not details.empty: st.dataframe(details,hide_index=True)
-        if mode == 'Торговля':
-            with st.expander('История восстановления спреда'):
-                _render_recovery(st, snapshot, identity)
+        with recovery_tab:
+            if mode == 'Торговля': _render_recovery(st, snapshot, identity)
+            else: st.caption('История восстановления доступна в режиме «Торговля».')
+        with data_tab:
+            _render_data(st,snapshot,day,selected,enrichment_reason)
     peer_tab,market_tab,curve_tab = st.tabs(['Аналоги','Бумага среди других выпусков','КБД'],key='detail_tabs')
     with peer_tab:
         _render_members(st,snapshot,identity,window)
@@ -1111,24 +1158,27 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
                     'y':{'field':'yield_pct','type':'quantitative','title':'Доходность, % годовых','scale':{'zero':False},'axis':{'labelExpr':ru_axis(1)}},
                     'tooltip':[{'field':'maturity_text','title':'Срок, лет'},{'field':'yield_text','title':'Доходность, %'},{'field':'date','title':'Дата'}]}},width='stretch')
             st.caption('Точки опубликованы Банком России. Соединяющие отрезки служат ориентиром.')
-    with st.expander('Данные и ограничения'):
-        st.write({'Дата анализа':day,'Расчёт':snapshot.manifest.get('analysis_run_id','Старая схема'),
-                  'Версия схемы':snapshot.manifest.get('result_schema_version',1),'Правило':snapshot.manifest.get('classification_rule_version','Не сохранено')})
+    if selected.empty:
+        with st.expander('Данные и ограничения'):
+            _render_data(st,snapshot,day,selected,enrichment_reason)
+
+
+def _render_data(st,snapshot,day,selected,enrichment_reason):
+        for key,value in {'Дата анализа':pd.Timestamp(day).strftime('%d.%m.%Y'),'Расчёт':snapshot.manifest.get('analysis_run_id','Старая схема'),
+                  'Версия схемы':snapshot.manifest.get('result_schema_version',1),'Правило':snapshot.manifest.get('classification_rule_version','Не сохранено')}.items():
+            st.markdown(f'**{key}:** {value}')
         st.caption('Показаны сохранённые итоги торгов. Рейтинг, сектор и эмитент относятся к справке на дату загрузки.')
         if enrichment_reason: st.caption('Дополнительные характеристики: '+enrichment_reason)
         if not selected.empty:
-            for field in ['adv_source','adv_last_value_date','adv_n_values','DATA_GAPS','SMARTLAB_AT']:
-                st.write(field+': '+str(selected.iloc[0].get(field,'—')))
-            details = assessment_details(snapshot,identity[0],window,state.get('premium_basket','peers'))
-            if not details.empty:
-                st.dataframe(details,hide_index=True)
+            for field,label in [('adv_source','Источник оборота'),('adv_last_value_date','Последняя дата оборота'),('adv_n_values','Наблюдений оборота'),('DATA_GAPS','Пропуски данных'),('SMARTLAB_AT','Дата справочника')]:
+                st.markdown('**'+label+':** '+str(selected.iloc[0].get(field,'—')))
 
 
 def _render_members(st, snapshot, identity, window):
     if identity is None:
-        st.info('Выберите облигацию для просмотра аналогов')
         return
-    kind = st.segmented_control('Состав сравнения',list(KINDS),default='peers',required=True,format_func=lambda k:KINDS[k],key='members_kind')
+    kind = st.session_state.get('premium_basket','peers')
+    st.caption('Состав сравнения: '+KINDS[kind])
     frame = snapshot.tables['basket_members']
     members = frame[frame.SECID.eq(identity[0]) & frame.comparison.eq(kind)].copy()
     if members.empty:
@@ -1166,7 +1216,8 @@ def _render_members(st, snapshot, identity, window):
         else:
             excluded = exclusions[exclusions.SECID.eq(identity[0]) & exclusions.comparison.eq(kind)].copy()
             excluded['Причина'] = excluded.reason.map(reason_text)
-            st.dataframe(excluded[['candidate_SECID','Причина']].rename(columns={'candidate_SECID':'SECID'}),hide_index=True)
+            counts = excluded.groupby('Причина',sort=False).size().rename('Выпусков').reset_index()
+            st.dataframe(counts,hide_index=True)
 
 
 def _render_recovery(st, snapshot, identity):
@@ -1178,19 +1229,23 @@ def _render_recovery(st, snapshot, identity):
     st.caption(view['criterion'])
     st.write(view['message'])
     row = view['summary']
-    labels = ['Прошлые расширения спреда с известным результатом', 'Доля восстановлений',
-              'Типичное сужение', 'Время до восстановления', 'Дальнейшее расширение']
+    labels = ['Известных исходов', 'Восстановилось',
+              'Сужение', 'Срок', 'Расширение']
     share = row['recovery__share']
-    values = [str(int(row['recovery__n_known'])),
-        number(100*share, 1)+'%' if pd.notna(share) else '—',
+    known = int(row['recovery__n_known'])
+    recovered = int(row['recovery__n_recovered'])
+    values = [str(known),
+        f'{recovered} из {known}',
         number(row['recovery__median_reduction_bps'], signed=True)+' б.п.',
         number(row['recovery__median_days'], 1)+' дней',
         number(row['recovery__median_worsening_bps'], 1)+' б.п.']
-    with st.container(horizontal=True):
-        for label,value in zip(labels, values):
-            with st.container(width=220):
-                st.caption(label)
-                st.markdown('**'+value+'**')
+    if known < 5:
+        st.caption('Малая выборка: менее 5 известных исходов. Смотрите число восстановлений и общее число случаев.')
+    elif pd.notna(share):
+        st.caption('Доля восстановлений: '+number(100*share,1)+'%')
+    for column,label,value in zip(st.columns(5),labels,values):
+        with column, st.container(border=True):
+            st.metric(label,value)
     st.caption(f"Срок наблюдения ещё не прошёл: {int(row['recovery__n_pending'])} · "
                f"Неполных наблюдений: {int(row['recovery__n_incomplete'])}")
     reasons = {
@@ -1204,7 +1259,7 @@ def _render_recovery(st, snapshot, identity):
         'maturity_unknown':'Дата погашения неизвестна',
         'maturity_within_horizon':'Погашение попадает в срок наблюдения',
         'no_threshold_crossing':'Отдельных заметных расширений спреда не найдено'}
-    with st.expander('Прошлые расширения спреда и данные расчёта'):
+    with st.container():
         reason = row['recovery__reason']
         if pd.notna(reason) and reason:
             st.caption('; '.join(reasons.get(code, code) for code in reason.split(';')))
