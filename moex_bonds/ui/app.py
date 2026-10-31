@@ -16,6 +16,7 @@ from zipfile import BadZipFile
 
 import numpy as np
 import pandas as pd
+import streamlit as st
 
 from moex_bonds.analysis.spread_model import DIRECTIONS, RATINGS, read_daily, text_key
 from moex_bonds.analysis.spread_results import BASE_KEYS as KEYS
@@ -37,7 +38,7 @@ STATUSES = {'candidate': 'Выделен анализом', 'not_candidate': 'С
 ASSESSMENTS = {'evaluated': 'Оценено', 'provisional': 'Предварительно', 'unavailable': 'Недоступно'}
 MISSING = 'Нет данных'
 DARK_CHART = {'background':'#0F141B','view':{'stroke':None},
-    'font':'Inter',
+    'font':'Inter, Arial, sans-serif',
     'axis':{'gridColor':'#2B3746','labelColor':'#A8B3C2','titleColor':'#E6EDF3'},
     'legend':{'labelColor':'#A8B3C2','titleColor':'#E6EDF3'},
     'title':{'color':'#E6EDF3','subtitleColor':'#A8B3C2'}}
@@ -53,6 +54,7 @@ class PublicationBusy(DataUnavailable):
 
 @dataclass
 class Snapshot:
+    """Shared snapshots are read-only; consumers must copy before modifying tables."""
     manifest: dict
     tables: dict
     path: Path
@@ -357,6 +359,25 @@ def _shared_snapshot(root, day, fingerprint):
     return load_snapshot(root, day)
 
 
+def file_stamp(path):
+    stat = Path(path).stat()
+    return (stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+
+
+@lru_cache(maxsize=2)
+def _book_file(path, expected, day, stamp):
+    raw = Path(path).read_bytes()
+    if file_stamp(path) != stamp or hashlib.sha256(raw).hexdigest() != expected:
+        raise DataUnavailable('Дневная книга относится к другой версии расчёта')
+    return _parse_workbook(raw,day)
+
+
+@st.cache_data(max_entries=4,show_spinner=False)
+def cached_candidates(key, window, _snapshot, _enrichment):
+    # cache_data returns independent frames; shared snapshot/book inputs stay read-only.
+    return candidate_view(_snapshot,window,_enrichment)
+
+
 def load_enrichment(snapshot, daily=DAILY, publication=None):
     path = Path(daily) / 'daily' / 'bonds_daily.xlsx'
     try:
@@ -368,10 +389,7 @@ def load_enrichment(snapshot, daily=DAILY, publication=None):
                 raise DataUnavailable('Invalid portable workbook binding')
         if not expected:
             raise DataUnavailable('Не сохранена привязка дневной книги к этому анализу')
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != expected:
-            raise DataUnavailable('Дневная книга относится к другой версии расчёта')
-        return _parse_workbook(raw, snapshot.manifest['analysis_date']).copy(), ''
+        return _book_file(str(path.resolve()),expected,snapshot.manifest['analysis_date'],file_stamp(path)), ''
     except (OSError, ValueError, KeyError, BadZipFile) as error:
         return pd.DataFrame(), str(error)
 
@@ -660,7 +678,13 @@ def compact_label(value):
 def style_table(frame):
     numeric = [c for c in frame if pd.api.types.is_numeric_dtype(frame[c])]
     def delta(c): return c.endswith('_delta') or c in ('change_1d_bps',)
-    formats = {c:(lambda v,c=c:number(v,2 if c in ('DURATION_YEARS','YTM_WAPRICE','COUPONPERCENT','WAPRICE','member_duration','weight_pct','Дюрация, лет','Вес, %') else 1,delta(c))) for c in numeric}
+    def rounded(v,c):
+        text = number(v,3,delta(c))
+        if ',' in text:
+            text = text.rstrip('0')
+            if text.endswith(','): text += '0'
+        return text
+    formats = {c:(lambda v,c=c:rounded(v,c)) for c in numeric}
     if 'basis_label' in frame:
         formats['basis_label'] = lambda v:v.replace('По аналогам','Аналоги').replace('По эмитенту','Эмитент').replace('Нет полного вывода по эмитенту','эмитент: нет вывода').replace('Нет полного вывода по аналогам','аналоги: нет вывода')
     for c in ('adv20','VALUE_RUB','member_adv20','Оборот 20 дат, ₽'):
@@ -849,15 +873,16 @@ def scatter_spec(view, full, snapshot, identity, scope='Выборка', show_al
     plotted['duration_text'] = plotted.DURATION_YEARS.map(lambda v:number(v,2))
     plotted['spread_text'] = plotted.z_bps.map(number)
     plotted['turnover_text'] = plotted.adv20.map(turnover)
-    scale = {'zero':False}
+    plotted['selected_order'] = plotted.role.eq('Выбранная бумага').astype(int)
+    scale = {'zero':False,'padding':20}
     if not show_all and len(plotted)>2:
         lo,hi = plotted.z_bps.quantile([.01,.99]).tolist()
         if lo < hi: scale.update(domain=[lo,hi],nice=False)
     legend = {'orient':'top','direction':'horizontal','columns':4,'labelLimit':200,'symbolSize':90}
     ticks = np.arange(0,math.ceil(float(plotted.DURATION_YEARS.max())*2)/2+.5,.5).tolist() if not plotted.empty else [0,.5,1.]
-    spec = {'data':{'values':_records(plotted[['SECID','BOARDID','NAME','ISSUER','RATING','SECTOR','DURATION_YEARS','z_bps','adv20','status_label','role','roles','duration_text','spread_text','turnover_text']])},
+    spec = {'data':{'values':_records(plotted[['SECID','BOARDID','NAME','ISSUER','RATING','SECTOR','DURATION_YEARS','z_bps','adv20','status_label','role','roles','duration_text','spread_text','turnover_text','selected_order']])},
         'height':350, 'mark':{'type':'point','filled':True,'size':85,'clip':True},
-        'params':[{'name':'bond_pick','select':{'type':'point','fields':['SECID','BOARDID'],'toggle':False,'clear':False}}],
+        'params':[{'name':'bond_pick','select':{'type':'point','fields':['SECID','BOARDID'],'toggle':False,'clear':False},'views':['market_points']}],
         'encoding':{'x':{'field':'DURATION_YEARS','type':'quantitative','title':'Дюрация, лет','axis':{'values':ticks,'labelExpr':ru_axis(1)}},
             'y':{'field':'z_bps','type':'quantitative','title':'Z-спред, б.п.','scale':scale,'axis':{'labelExpr':ru_axis()}},
             'color':{'field':'role','type':'nominal','title':None,'legend':legend,
@@ -874,6 +899,15 @@ def scatter_spec(view, full, snapshot, identity, scope='Выборка', show_al
                 {'field':'duration_text','title':'Дюрация, лет'},{'field':'spread_text','title':'Z-спред, б.п.'},
                 {'field':'turnover_text','title':'Оборот 20 дат, ₽'},{'field':'status_label','title':'Статус'},{'field':'roles','title':'Роль'}]},
         'config':DARK_CHART}
+    spec['encoding'].update(size={'condition':{'test':"datum.role === 'Выбранная бумага'",'value':220},'value':75},
+        opacity={'condition':{'test':"datum.role === 'Выбранная бумага'",'value':1},'value':.45},
+        order={'field':'selected_order','type':'quantitative'})
+    spec['layer'] = [{'name':'market_points','mark':spec.pop('mark')},
+        {'transform':[{'filter':"datum.role === 'Выбранная бумага'"}],
+         'mark':{'type':'text','align':{'expr':f"datum.DURATION_YEARS > {max(ticks)/2} ? 'right' : 'left'"},
+                 'dx':{'expr':f"datum.DURATION_YEARS > {max(ticks)/2} ? -10 : 10"},
+                 'dy':-12,'clip':False,'fontSize':12,'fontWeight':600},
+         'encoding':{'text':{'field':'NAME'},'color':{'value':'#E6EDF3'},'opacity':{'value':1},'size':{'value':12}}}]
     return spec, missing, grouping_reason
 
 
@@ -900,10 +934,20 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     st.html('<style>@font-face {font-family:Inter;src:url("app/static/fonts/Inter.ttf");font-weight:100 900;font-feature-settings:"tnum";}'
             '[data-testid="stVegaLiteChart"] svg {max-width:100%;height:auto;}'
             '[data-testid="stMain"] {font-variant-numeric:tabular-nums;}'
-            '[data-testid="stMainBlockContainer"] {padding-top:4rem;}'
+            '[data-testid="stMainBlockContainer"] {padding-top:4rem;max-width:1600px;margin-inline:auto;}'
             '[data-testid="stMetricValue"] {font-size:1.35rem;}'
+            '#bond-detail {display:block;scroll-margin-top:5rem;}'
             '.vg-tooltip {background:#171F2A!important;color:#E6EDF3!important;border-color:#2B3746!important;}</style>')
     state = st.session_state
+    # Keep conditional widget settings when a lazy section is not rendered.
+    for key in ('market_scope','scatter_show_all','premium_basket','detail_section'):
+        if key in state: state[key] = state[key]
+    if not state.get('_url_loaded'):
+        state['_url_loaded'] = True
+        if st.query_params.get('mode') in MODE_COLUMNS: state['mode'] = st.query_params['mode']
+        if st.query_params.get('window') in ('90','150'): state['window'] = int(st.query_params['window'])
+        secid,board = st.query_params.get('secid'),st.query_params.get('board')
+        if secid and board: state['selected_bond'] = (secid,board)
     if publication is not None and state.get('_publication_id') != publication['analysis_run_id']:
         for key in ('analysis_date', 'archive_date', '_snapshot', '_snapshot_token'):
             state.pop(key, None)
@@ -925,9 +969,11 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         signals = st.segmented_control('Список',['Выделены анализом','Все выпуски'],default='Выделены анализом',required=True,
                                       key='list_scope',label_visibility='collapsed') == 'Выделены анализом'
         filter_slot = st.container(width='content')
-        parameters = st.popover('Параметры',key='analysis_parameters')
-    with parameters:
-        if len(dates) > 1:
+        if len(dates)>1:
+            parameters = st.popover('Дата анализа',key='analysis_parameters')
+        else: parameters = None
+    if parameters is not None:
+        with parameters:
             def archive_changed():
                 state['analysis_date'] = state['archive_date']
             st.selectbox('Дата анализа',dates,index=dates.index(state.analysis_date),key='archive_date',
@@ -937,7 +983,7 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         guard_before = _guard(Path(analysis))
         token = hashlib.sha256(guard_before+(Path(analysis)/'snapshots'/day/'run_manifest.json').read_bytes()).hexdigest()
         folder = Path(analysis)/'snapshots'/day
-        fingerprint = token + ''.join(hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.glob('*.csv')))
+        fingerprint = token + str([(p.name,file_stamp(p)) for p in sorted(folder.glob('*.csv'))])
         snapshot = _shared_snapshot(str(Path(analysis).resolve()), day, fingerprint)
         if _guard(Path(analysis)) != guard_before:
             raise PublicationBusy('Результаты изменились во время чтения')
@@ -955,7 +1001,9 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         window = st.segmented_control('Окно, торговых дат',windows,required=True,key='window')
     context_line.caption(f'Данные за {pd.Timestamp(day):%d.%m.%Y} · окно {window} торговых дат')
     enrichment, enrichment_reason = load_enrichment(snapshot, daily, publication=publication)
-    full = candidate_view(snapshot, window, enrichment)
+    book_path = Path(daily)/'daily'/'bonds_daily.xlsx'
+    book_stamp = file_stamp(book_path) if book_path.exists() else None
+    full = cached_candidates((str(Path(analysis).resolve()),day,fingerprint,str(book_path.resolve()),book_stamp,enrichment_reason),window,snapshot,enrichment)
     options = {}
     unavailable = {}
     for field,key in [('candidate_status','status'),('RATING','rating'),('SECTOR','sector'),('ISSUER','issuer')]:
@@ -1005,8 +1053,11 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         sort_ascending = st.radio('Порядок',[True,False],format_func=lambda value:'По возрастанию' if value else 'По убыванию',horizontal=True,key='sort_ascending')
     base = [c for c in COMMON if not (signals and c == 'status_label')]+MODE_COLUMNS[mode]
     with controls.popover('Колонки'):
+        profile = st.segmented_control('Профиль',['Минимум','Стандарт','Всё'],default='Стандарт',required=True,key='column_profile')
         extra = st.multiselect('Дополнительные', [c for c in LABELS if c in full and c not in base],
             format_func=lambda f:LABELS[f], key='columns_'+mode)
+    if profile == 'Минимум': base = ['NAME','RATING','z_bps','peers_delta']+MODE_COLUMNS[mode][:1]
+    elif profile == 'Всё': base = [c for c in LABELS if c in full and not (signals and c == 'status_label')]
     columns = list(dict.fromkeys(base+extra))
     view = sort_view(filtered, sort_field, sort_ascending)
     sort_name = 'Отклонение премии к аналогам' if sort_field == 'peers_delta' else LABELS[sort_field]
@@ -1021,7 +1072,7 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
             cfg[field] = st.column_config.ImageColumn(LABELS[field],width=120,help='Сохранённый Z-спред за последние 30 дат снимка; разрывы означают пропуски, шкала своя для каждой строки.')
         elif field == 'MATDATE': cfg[field] = st.column_config.DateColumn(LABELS[field],format='DD.MM.YYYY')
         elif field == 'anomaly_label':
-            cfg[field] = st.column_config.TextColumn('Критерий', width='small',
+            cfg[field] = st.column_config.TextColumn('Критерий аномальности', width='medium',
                 help='Оба — два критерия; Robust — только robust score; Процент. — только процентиль; Разные — выводы направлений различаются; * — часть направлений недоступна. Полная расшифровка — в карточке и вкладке «Расчёт».')
         elif field in ['NAME','status_label','RATING','SECID','ISSUER','SECTOR','basis_label']:
             cfg[field] = st.column_config.TextColumn(LABELS[field],pinned=field == 'NAME',width='small' if field in ('basis_label','status_label') else None)
@@ -1039,7 +1090,7 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         chosen = selected_identity(view,positions)
         if chosen is not None: state['selected_bond'] = chosen
     st.dataframe(style_table(view[columns]),column_config=cfg,hide_index=True,height=table_height(len(view),identity is not None),row_height=35,placeholder='—',
-        key=table_key,on_select=select_row,selection_mode=['single-row','single-column'],
+        key=table_key,on_select=select_row,selection_mode='single-row',
         selection_default={'selection':{'rows':selected_rows[:1]}})
     notice = shortlist_notice(full,view) if signals else ('Нет бумаг по выбранным фильтрам' if view.empty else '')
     if notice: st.info(notice)
@@ -1050,16 +1101,42 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         st.caption('Дневные характеристики недоступны: '+enrichment_reason)
     identity = state.get('selected_bond')
     selected = full.iloc[:0] if identity is None else full[full.SECID.eq(identity[0]) & full.BOARDID.eq(identity[1])]
+    url_state = {'mode':mode,'window':str(window)}
+    if identity: url_state.update(secid=identity[0],board=identity[1])
+    for key in ('secid','board','mode','window'):
+        if key in url_state:
+            if st.query_params.get(key) != url_state[key]: st.query_params[key] = url_state[key]
+        elif key in st.query_params: del st.query_params[key]
     st.divider()
     if identity is None:
         st.caption('Выберите облигацию в таблице или на диаграмме, чтобы открыть подробности.')
+        leaders = sort_view(full[full.candidate_status.eq('candidate')],'peers_delta',False).head(3)
+        st.markdown(f'**Выделено анализом: {int(full.candidate_status.eq("candidate").sum())}** · топ по отклонению премии к аналогам')
+        for item in leaders.itertuples():
+            st.caption(str(item.NAME)+' · '+number(item.peers_delta,signed=True)+' б.п.')
     elif selected.empty:
         st.subheader(identity[0])
         st.info('Бумаги нет в анализе за выбранную дату')
     else:
         row = selected.iloc[0]
+        st.html('<span id="bond-detail"></span>')
         st.subheader(str(row.NAME))
-        basket = state.get('premium_basket','peers')
+        st.caption(f'{row.SECID} · {row.ISSUER}')
+        with st.container(horizontal=True):
+            rating = str(row.RATING)
+            rating_color = 'blue' if rating.startswith('AA') else 'violet' if rating.startswith('A') else 'orange' if rating.startswith('BBB') else 'red' if rating.startswith(('BB','B','C','D')) else 'gray'
+            for badge,color in ((rating,rating_color),(str(row.SECTOR),'gray'),(row.status_label,'blue' if row.candidate_status=='candidate' else 'gray'),(row.basis_label,'gray')):
+                if badge: st.badge(badge,color=color)
+        if not ((view.SECID == identity[0]) & (view.BOARDID == identity[1])).any():
+            st.info('Выбранная бумага вне текущего списка')
+        facts = (f'Z-спред: {number(row.z_bps)} б.п. · дюрация: {number(row.DURATION_YEARS,2)} лет · '
+                 f'оборот 20 дат: {turnover(row.adv20)} · ΔZ за день: {number(row.change_1d_bps,signed=True)} б.п.') if mode == 'Торговля' else (
+                 f'YTM: {number(row.YTM_WAPRICE,2)}% · погашение: '+(pd.Timestamp(row.MATDATE).strftime('%d.%m.%Y') if pd.notna(row.MATDATE) else '—')+
+                 f' · купон: {number(row.COUPONPERCENT,2)}% / {number(row.COUPONVALUE,2)} ₽ · Z-спред: {number(row.z_bps)} б.п.')
+        with st.popover('Характеристики'):
+            st.write('Критерий аномальности: '+row.anomaly_label)
+        st.caption(facts)
+        basket = st.segmented_control('Премия к корзине',list(KINDS),default='peers',required=True,format_func=lambda k:KINDS[k],key='premium_basket')
         values = headline_values(snapshot,identity[0],basket,window)
         history, own, premium = history_view(snapshot,identity[0],basket,window)
         metric_columns = st.columns(4)
@@ -1067,7 +1144,11 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
             for index,label in enumerate(['Z-спред бумаги','Спред корзины','Текущая премия','Медиана премии']):
                 with metric_columns[index], st.container(border=True,height=110):
                     if index < 3:
+                        daily_delta = row.change_1d_bps if index == 0 else np.nan
                         st.metric(label,number(values[index],signed=index == 2)+' б.п.',
+                                  delta=(number(daily_delta,signed=True)+' б.п. за день') if pd.notna(daily_delta) else None,
+                                  delta_arrow='up' if pd.notna(daily_delta) and daily_delta>0 else 'down' if pd.notna(daily_delta) and daily_delta<0 else 'off',
+                                  delta_color='green' if pd.notna(daily_delta) and daily_delta>0 else 'red' if pd.notna(daily_delta) and daily_delta<0 else 'off',
                                   help=['Сохранённый текущий спред выпуска.','Взвешенный спред выбранной корзины.','Спред бумаги минус спред корзины.'][index])
                     else:
                         delta = values[3]
@@ -1076,51 +1157,42 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
                                   delta_arrow='up' if pd.notna(delta) and delta>0 else ('down' if pd.notna(delta) and delta<0 else 'off'),
                                   delta_color='green' if pd.notna(delta) and delta>0 else ('red' if pd.notna(delta) and delta<0 else 'off'),
                                   help=f'Историческая медиана премии за {window} дат; дельта — отклонение текущей премии.')
-        st.caption(f'{row.SECID} · {row.ISSUER}')
-        with st.container(horizontal=True):
-            for badge in (str(row.RATING),str(row.SECTOR),row.status_label,row.basis_label):
-                if badge: st.badge(badge,color='gray')
-        st.segmented_control('Премия к корзине',list(KINDS),default='peers',required=True,format_func=lambda k:KINDS[k],key='premium_basket')
-        if not ((view.SECID == identity[0]) & (view.BOARDID == identity[1])).any():
-            st.info('Выбранная бумага вне текущего списка')
-        facts = (f'Z-спред: {number(row.z_bps)} б.п. · дюрация: {number(row.DURATION_YEARS,2)} лет · '
-                 f'оборот 20 дат: {turnover(row.adv20)} · ΔZ за день: {number(row.change_1d_bps,signed=True)} б.п.') if mode == 'Торговля' else (
-                 f'YTM: {number(row.YTM_WAPRICE,2)}% · погашение: '+(pd.Timestamp(row.MATDATE).strftime('%d.%m.%Y') if pd.notna(row.MATDATE) else '—')+
-                 f' · купон: {number(row.COUPONPERCENT,2)}% / {number(row.COUPONVALUE,2)} ₽ · Z-спред: {number(row.z_bps)} б.п.')
-        with st.popover('Характеристики'):
-            st.write(facts)
-            st.write('Критерий аномальности: '+row.anomaly_label)
-        context = str((snapshot.manifest.get('analysis_run_id'),day,identity,window))
-        full_domain = [_milliseconds(own.window_start), _milliseconds(day)]
-        chart_title,chart_action = st.columns([3,1])
-        chart_title.markdown('#### История спреда и премии')
-        if chart_action.button('Сбросить масштаб',key='reset_history_zoom',help='Вернуть полный диапазон выбранного окна на обеих панелях'):
-            state['history_domain'] = list(full_domain)
-            state['history_revision'] = state.get('history_revision',0)+1
-        domain = history_domain(state,context,full_domain)
-        chart_key = 'history_'+hashlib.sha256(str((context,basket,state.get('history_revision'))).encode()).hexdigest()[:16]
-        def zoom_changed():
-            capture_zoom(state,context,_selection(state.get(chart_key)),full_domain)
-        st.vega_lite_chart(build_history_spec(history,own,premium,day,basket,domain),width='stretch',
-            key=chart_key,on_select=zoom_changed,selection_mode=['zoom_x'],alt='Сверху история Z-спреда бумаги, снизу её премия к выбранной корзине. Общие даты и масштаб.')
-        st.caption('Сохранённые значения · '+pd.Timestamp(day).strftime('%d.%m.%Y')+f' · окно {window} дат')
+        @st.fragment
+        def history_fragment():
+            context = str((snapshot.manifest.get('analysis_run_id'),day,identity,window))
+            full_domain = [_milliseconds(own.window_start), _milliseconds(day)]
+            chart_title,chart_action = st.columns([3,1])
+            chart_title.markdown('#### История спреда и премии')
+            if chart_action.button('Сбросить масштаб',key='reset_history_zoom',help='Вернуть полный диапазон выбранного окна на обеих панелях'):
+                state['history_domain'] = list(full_domain)
+                state['history_revision'] = state.get('history_revision',0)+1
+            domain = history_domain(state,context,full_domain)
+            chart_key = 'history_'+hashlib.sha256(str((context,basket,state.get('history_revision'))).encode()).hexdigest()[:16]
+            def zoom_changed():
+                capture_zoom(state,context,_selection(state.get(chart_key)),full_domain)
+            st.vega_lite_chart(build_history_spec(history,own,premium,day,basket,domain),width='stretch',
+                key=chart_key,on_select=zoom_changed,selection_mode=['zoom_x'],alt='Сверху история Z-спреда бумаги, снизу её премия к выбранной корзине. Общие даты и масштаб.')
+            st.caption('Сохранённые значения · '+pd.Timestamp(day).strftime('%d.%m.%Y')+f' · окно {window} дат')
+        history_fragment()
         reason = reason_text(premium.get('current_reason')) or reason_text(premium.get('hist_reason'))
-        calculation_tab,recovery_tab,data_tab = st.tabs(['Расчёт','Восстановление','Данные'])
-        with calculation_tab:
+        detail_section = st.segmented_control('Подробности',['Расчёт','Восстановление','Данные'],default='Расчёт',required=True,key='detail_section')
+        if detail_section == 'Расчёт':
             st.write('Состав и веса корзины зафиксированы на дату анализа. Масштаб не меняет окно расчёта.')
-            st.write('Коридор: границы не заданы. Показаны сохранённые ряды, медианы и текущие значения.')
             if reason: st.write('Сравнение: '+reason)
             details = assessment_details(snapshot,identity[0],window,basket)
             if not details.empty: st.dataframe(details,hide_index=True)
-        with recovery_tab:
+        elif detail_section == 'Восстановление':
             if mode == 'Торговля': _render_recovery(st, snapshot, identity)
             else: st.caption('История восстановления доступна в режиме «Торговля».')
-        with data_tab:
+        elif detail_section == 'Данные':
             _render_data(st,snapshot,day,selected,enrichment_reason)
-    peer_tab,market_tab,curve_tab = st.tabs(['Аналоги','Бумага среди других выпусков','КБД'],key='detail_tabs')
-    with peer_tab:
+    comparison_section = st.segmented_control('Обзор',['Аналоги','Бумага среди других выпусков','КБД'],default='Аналоги',required=True,key='comparison_section')
+    if comparison_section == 'Аналоги':
         _render_members(st,snapshot,identity,window)
-    with market_tab:
+    elif comparison_section == 'Бумага среди других выпусков':
+        if not selected.empty:
+            st.caption('Выбрана: '+str(selected.iloc[0].NAME))
+            st.markdown('[↑ К карточке бумаги](#bond-detail)')
         st.caption('Каждая точка — облигация. Правее — больше дюрация, выше — шире текущий Z-спред. Нажмите точку, чтобы открыть выпуск.')
         scope = st.segmented_control('Область диаграммы',['Выборка','Эмитент'],default='Выборка',required=True,key='market_scope')
         show_all = st.toggle('Показать все выбросы',value=False,key='scatter_show_all',help='Без ограничения по квантилям 1–99%. Исходные значения не изменяются.')
@@ -1146,7 +1218,7 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
                 if grouping_reason: st.write(grouping_reason)
             if not selected.empty and (pd.isna(selected.iloc[0].z_bps) or pd.isna(selected.iloc[0].DURATION_YEARS)):
                 st.info('Нет данных для точки выбранной бумаги на диаграмме')
-    with curve_tab:
+    elif comparison_section == 'КБД':
         curve, curve_reason = load_curve(day,daily)
         if curve.empty: st.info(curve_reason or 'КБД за выбранную дату не сохранена')
         else:
@@ -1176,6 +1248,7 @@ def _render_data(st,snapshot,day,selected,enrichment_reason):
 
 def _render_members(st, snapshot, identity, window):
     if identity is None:
+        st.caption('Выберите облигацию в верхней таблице или на диаграмме, чтобы увидеть состав сравнения.')
         return
     kind = st.session_state.get('premium_basket','peers')
     st.caption('Состав сравнения: '+KINDS[kind])
@@ -1230,15 +1303,15 @@ def _render_recovery(st, snapshot, identity):
     st.write(view['message'])
     row = view['summary']
     labels = ['Известных исходов', 'Восстановилось',
-              'Сужение', 'Срок', 'Расширение']
+              'Сужение · медиана', 'Срок · медиана', 'Расширение · медиана']
     share = row['recovery__share']
     known = int(row['recovery__n_known'])
     recovered = int(row['recovery__n_recovered'])
     values = [str(known),
         f'{recovered} из {known}',
-        number(row['recovery__median_reduction_bps'], signed=True)+' б.п.',
-        number(row['recovery__median_days'], 1)+' дней',
-        number(row['recovery__median_worsening_bps'], 1)+' б.п.']
+        number(row['recovery__median_reduction_bps'], signed=True)+' б.п.' if pd.notna(row['recovery__median_reduction_bps']) else '—',
+        number(row['recovery__median_days'], 1)+' дней' if pd.notna(row['recovery__median_days']) else '—',
+        number(row['recovery__median_worsening_bps'], 1)+' б.п.' if pd.notna(row['recovery__median_worsening_bps']) else '—']
     if known < 5:
         st.caption('Малая выборка: менее 5 известных исходов. Смотрите число восстановлений и общее число случаев.')
     elif pd.notna(share):
