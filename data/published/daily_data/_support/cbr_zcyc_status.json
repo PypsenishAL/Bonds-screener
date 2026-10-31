@@ -1,17 +1,17 @@
 {
   "status": "ok",
-  "trade_date": "2026-10-27",
+  "trade_date": "2026-10-30",
   "rows": 12,
-  "source_url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026",
+  "source_url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=30.10.2026&UniDbQuery.To=30.10.2026",
   "units": "Доходность в % годовых: 13.09 означает 13.09%; срок в годах",
-  "started_at_msk": "2026-10-28T16:51:35.200015+03:00",
+  "started_at_msk": "2026-10-31T11:15:44.806350+03:00",
   "attempts": [
     {
       "attempt": 1,
       "http_status": 200,
-      "url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026"
+      "url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=30.10.2026&UniDbQuery.To=30.10.2026"
     }
   ],
   "table_file": "cbr_zcyc.csv",
-  "finished_at_msk": "2026-10-28T16:51:35.661871+03:00"
+  "finished_at_msk": "2026-10-31T11:15:45.218787+03:00"
 }

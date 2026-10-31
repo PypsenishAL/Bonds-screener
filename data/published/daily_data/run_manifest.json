@@ -1,57 +1,59 @@
 {
   "mode": "day",
-  "started_at_msk": "2026-10-28T16:51:11.928832+03:00",
-  "as_of_date": "2026-10-28",
+  "started_at_msk": "2026-10-31T11:15:27.956984+03:00",
+  "as_of_date": "2026-10-31",
   "args": {
     "date": null,
     "secids": "",
-    "output": "D:\\z\\moex_api_probe\\daily_data",
-    "timeout": 60.0,
+    "output": "D:\\z\\moex_api_probe\\data\\daily_data",
+    "timeout": 15,
     "history_output": null,
     "pause": 0.25,
     "daily": true,
-    "csv_only": false
+    "csv_only": false,
+    "publish": true,
+    "publish_retry": false
   },
   "collection_status": "ok",
-  "selected_count": 3031,
+  "selected_count": 3046,
   "scope": "Все дневные записи TQCB; итоговые фильтры применяются отдельно",
-  "history_downloaded": false,
+  "history_downloaded": true,
   "adv20_basis": "Не загружается в дневном режиме",
   "cbr_zcyc": {
     "status": "ok",
-    "trade_date": "2026-10-27",
+    "trade_date": "2026-10-30",
     "rows": 12,
-    "source_url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026",
+    "source_url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=30.10.2026&UniDbQuery.To=30.10.2026",
     "units": "Доходность в % годовых: 13.09 означает 13.09%; срок в годах",
-    "started_at_msk": "2026-10-28T16:51:35.200015+03:00",
+    "started_at_msk": "2026-10-31T11:15:44.806350+03:00",
     "attempts": [
       {
         "attempt": 1,
         "http_status": 200,
-        "url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=27.10.2026&UniDbQuery.To=27.10.2026"
+        "url": "https://www.cbr.ru/hd_base/zcyc_params/?UniDbQuery.Posted=True&UniDbQuery.From=30.10.2026&UniDbQuery.To=30.10.2026"
       }
     ],
     "table_file": "cbr_zcyc.csv",
-    "finished_at_msk": "2026-10-28T16:51:35.661871+03:00"
+    "finished_at_msk": "2026-10-31T11:15:45.218787+03:00"
   },
   "cbr_ruonia": {
     "status": "ok",
     "schema_version": 1,
-    "trade_date": "2026-10-27",
-    "date_from": "2026-10-20",
-    "date_to": "2026-10-27",
+    "trade_date": "2026-10-30",
+    "date_from": "2026-10-23",
+    "date_to": "2026-10-30",
     "interval": "trade_date - 7 calendar days through trade_date, both inclusive",
-    "rows": 6,
-    "latest_rate_date": "2026-10-27",
-    "lag_days": 0,
-    "has_rate_on_trade_date": true,
-    "source_url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=20.10.2026&UniDbQuery.To=27.10.2026",
-    "started_at_msk": "2026-10-28T16:51:35.200911+03:00",
+    "rows": 5,
+    "latest_rate_date": "2026-10-29",
+    "lag_days": 1,
+    "has_rate_on_trade_date": false,
+    "source_url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=23.10.2026&UniDbQuery.To=30.10.2026",
+    "started_at_msk": "2026-10-31T11:15:44.807144+03:00",
     "attempts": [
       {
         "attempt": 1,
         "http_status": 200,
-        "url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=20.10.2026&UniDbQuery.To=27.10.2026"
+        "url": "https://www.cbr.ru/hd_base/ruonia/dynamics/?UniDbQuery.Posted=True&UniDbQuery.From=23.10.2026&UniDbQuery.To=30.10.2026"
       }
     ],
     "publication_basis": "Снимок на время загрузки; дата публикации может быть позднее даты торгов",
@@ -136,26 +138,35 @@
       }
     ],
     "table_file": "cbr_ruonia.csv",
-    "actual_date_from": "2026-10-20",
-    "actual_date_to": "2026-10-27",
-    "valid_rate_count": 6,
+    "actual_date_from": "2026-10-23",
+    "actual_date_to": "2026-10-29",
+    "valid_rate_count": 5,
     "data_gaps": {},
-    "finished_at_msk": "2026-10-28T16:51:35.584978+03:00"
+    "finished_at_msk": "2026-10-31T11:15:45.171007+03:00"
   },
   "daily_export": {
     "status": "ok",
-    "trade_date": "2026-10-27",
-    "as_of": "2026-10-28",
-    "source_run": "D:\\z\\moex_api_probe\\daily_data",
+    "trade_date": "2026-10-30",
+    "as_of": "2026-10-31",
+    "source_run": "D:\\z\\moex_api_probe\\data\\daily_data",
     "history_update": {
-      "status": "not_initialized",
-      "output": "D:\\z\\moex_api_probe\\history_data"
+      "status": "ok",
+      "output": "D:\\z\\moex_api_probe\\data\\history_data",
+      "trade_date": "2026-10-30",
+      "rows_added": 684,
+      "recovered_dates": [
+        "2026-10-28",
+        "2026-10-29"
+      ],
+      "synchronized_through": "2026-10-30",
+      "previous_last_row_date": "2026-10-27",
+      "sync_from": "2026-10-27"
     },
-    "input_count": 3031,
-    "final_count": 242,
-    "excluded_count": 2789,
-    "smartlab_ok": 935,
-    "smartlab_errors": 2096,
+    "input_count": 3046,
+    "final_count": 222,
+    "excluded_count": 2824,
+    "smartlab_ok": 938,
+    "smartlab_errors": 2108,
     "scope": "Все дневные записи TQCB; итоговые фильтры применяются отдельно",
     "history_mode": "одна дата; ADV20 не загружался",
     "rating_basis": "Текущая справка Smart-Lab; не исторический рейтинг на дату торгов",
@@ -165,9 +176,9 @@
     "xlsx_status": "ok"
   },
   "storage_mode": "overwrite",
-  "output_dir": "D:\\z\\moex_api_probe\\daily_data",
-  "trade_date": "2026-10-27",
-  "finished_at_msk": "2026-10-28T17:24:13.731582+03:00",
-  "day_quote_rows": 6062,
-  "calendar_rows": 21571
+  "output_dir": "D:\\z\\moex_api_probe\\data\\daily_data",
+  "trade_date": "2026-10-30",
+  "finished_at_msk": "2026-10-31T11:41:02.410967+03:00",
+  "day_quote_rows": 6092,
+  "calendar_rows": 21553
 }
