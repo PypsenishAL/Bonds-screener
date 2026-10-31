@@ -2,13 +2,13 @@
   "status": "ok",
   "mode": "zspread_analysis",
   "analysis_date": "2026-10-30",
-  "created_at": "2026-10-31T12:03:04.921355+03:00",
+  "created_at": "2026-10-31T22:48:07.585549+03:00",
   "instruments": 222,
   "confirmed_current_spreads": 182,
   "source_sha256": {
     "D:\\z\\moex_api_probe\\data\\daily_data\\daily\\bonds_daily.xlsx": "288f18d25579fdae3bb44606cc281ed99bcdf95466521312baccdfe24913da5a",
     "D:\\z\\moex_api_probe\\data\\history_data\\bonds_history.csv": "75a6747a41d64ebc25aa96464b7c8799143f8c3699284426efb55e71a33694ab",
-    "D:\\z\\moex_api_probe\\config\\spread_config.json": "f5f5f11bb9844969b24374a2a49b807d5bba22201a9665a7199afd9672be794a",
+    "D:\\z\\moex_api_probe\\config\\spread_config.json": "091b9d583023370b93a91f8a3f15d1ce27b691ab7d61ea9bb77d3613dc4d33ee",
     "D:\\z\\moex_api_probe\\data\\history_data\\run_manifest.json": "150755133eed7d9a70c666cc8e9a8e6d83e5050d1ae9cb8d168804bbc73828b5"
   },
   "input_unchanged": true,
@@ -23,7 +23,7 @@
       "reference_window": 90,
       "min_observations": 60,
       "entry_scale": 1.0,
-      "recovery_fraction": 0.5,
+      "target_scale": 0.25,
       "horizon_months": 3
     },
     "classification": {
@@ -77,16 +77,16 @@
       }
     }
   },
-  "analysis_run_id": "1693363624174f7b9962a71cd9825b7f",
+  "analysis_run_id": "ebab0c87a4dd4e5f834986f1916da8a3",
   "classification_rule_version": "upper_tail_midrank_robust_v2",
   "result_schema_version": 3,
   "implementation_sha256": {
-    "analyze_spreads.py": "b883cd9f93ef750a1c190ffc7a59028e084c21d7d19118ac5d60efc4d5127240",
+    "analyze_spreads.py": "76a0d43874ca4516e72c80f997b24ec4080fb20777f679dd05243bee1fb31c60",
     "spread_classification.py": "17bf9aac9a02b16d48bd9e0c220c563eec15cc78715998905186980f65b1d773",
-    "spread_model.py": "5fcf59aba2445af57f699ba49c7a8d1ca376dd2f8807824a2d2dee3bf3496e31",
+    "spread_model.py": "1a19df7562882610f129b7a2363c0d28c0c766661f9e5f91b17f23b0acf834ca",
     "spread_history.py": "814677125c8dec45e677d1e982d83d708da293875d98ac7d814e939577c9c03f",
-    "spread_results.py": "3c1b66749bf219835c7a6642e445eace90c3551581c024a901f9959dd8008ef2",
-    "spread_recovery.py": "74301a1a33c7a661aa5463bd57f32a539c4bc7ae39f4aca5131653f0d2bed2d5",
+    "spread_results.py": "e3a25fe529530e1de07f5a4e869eadb1d880c2c44e9069f5f5f22b1600de960b",
+    "spread_recovery.py": "32196295e043d84baf128896c64cfee1fac052de36ffbb120893d69c7224e8d8",
     "history_storage.py": "a5b1b6b401a24b74146bdf9a6ba2ca49d1f44923d62b80ba7ae51459cd1927b3",
     "daily_storage.py": "6a61bd9691ecb63b1d05392512703c7078167fd72a8fe0ff5a179a979ff34674",
     "paths.py": "a153e3c719e2ca51ebadc447bb33aaeda7002845df8edb24c7cd3fd1ed71469e"
@@ -328,6 +328,7 @@
         "SECID",
         "TRADEDATE",
         "TRADE_STATUS",
+        "WAPRICE",
         "ZSPREADATWAPRICE"
       ]
     },
@@ -898,21 +899,28 @@
       "SECID",
       "BOARDID",
       "entry_date"
+    ],
+    "recovery_history": [
+      "analysis_date",
+      "SECID",
+      "BOARDID",
+      "observation_date"
     ]
   },
-  "recovery_rule_version": "own_spread_recovery_v1",
+  "recovery_rule_version": "own_spread_recovery_v2",
   "recovery_coverage": {
     "calendar_confirmed": true,
     "calendar_dates": 183,
     "history_start": "2026-02-13",
-    "known_cases": 149,
-    "recovered_cases": 149,
-    "pending_cases": 211,
-    "incomplete_cases": 5,
+    "episode_count": 365,
+    "recovered_cases": 292,
+    "open_cases": 73,
+    "ended_cases": 0,
+    "mature_known_cases": 154,
+    "mature_unknown_cases": 0,
     "bond_statuses": {
-      "available": 95,
+      "available": 135,
       "unavailable": 73,
-      "no_known_outcomes": 40,
       "no_cases": 14
     },
     "daily_override_count": 0,
