@@ -21,7 +21,9 @@ import streamlit as st
 from moex_bonds.analysis.spread_model import DIRECTIONS, RATINGS, read_daily, text_key
 from moex_bonds.analysis.spread_results import BASE_KEYS as KEYS
 from moex_bonds.analysis.spread_recovery import (RECOVERY_RULE_VERSION, EPISODE_KEYS, EPISODE_COLUMNS,
-                             SUMMARY_FIELDS, validate_recovery_config, recovery_statistics)
+                             SUMMARY_FIELDS, validate_recovery_config, recovery_statistics,
+                             LEGACY_RECOVERY_RULE_VERSION, SUPPORTED_RECOVERY_VERSIONS,
+                             HISTORY_KEYS, validate_recovery_config_v1, recovery_target)
 
 from moex_bonds.paths import PROJECT_DIR, DAILY_DIR, ANALYSIS_DIR, recorded_source_hash
 
@@ -60,6 +62,7 @@ class Snapshot:
     path: Path
     legacy: bool = False
     exclusions_reason: str = ''
+    recovery_reason: str = ''
 
 
 def _json(raw):
@@ -72,7 +75,7 @@ def _json(raw):
 def _csv(raw):
     frame = pd.read_csv(BytesIO(raw), dtype={'SECID': str, 'BOARDID': str, 'member_SECID': str,
                                            'member_BOARDID': str, 'candidate_SECID': str})
-    boolean = ('calendar_confirmed', 'upper_tail_anomaly', 'robust_anomaly', 'candidate_qualified', 'structured', 'liquidity_omitted')
+    boolean = ('calendar_confirmed', 'upper_tail_anomaly', 'robust_anomaly', 'candidate_qualified', 'structured', 'liquidity_omitted', 'recovered_within_horizon')
     for column in frame:
         if column in boolean or any(column.endswith('__'+name) for name in boolean):
             def nullable(value):
@@ -109,12 +112,20 @@ def load_snapshot(root=ANALYSIS, day=None):
             if manifest.get('status') != 'ok' or manifest.get('analysis_date') != day:
                 raise DataUnavailable('Снимок не завершён или его дата не совпадает')
             table_keys = dict(KEYS)
-            if 'recovery_rule_version' in manifest:
-                if manifest['recovery_rule_version'] != RECOVERY_RULE_VERSION:
-                    raise DataUnavailable('Версия истории восстановления не поддерживается')
-                validate_recovery_config(manifest.get('config', {}).get('recovery'))
-                table_keys['recovery_episodes'] = EPISODE_KEYS
+            recovery_version = manifest.get('recovery_rule_version')
+            recovery_reason, recovery_raw, recovery_keys = '', {}, {}
             raw = {name: (folder / (name+'.csv')).read_bytes() for name in table_keys}
+            if recovery_version:
+                if recovery_version not in SUPPORTED_RECOVERY_VERSIONS:
+                    recovery_reason = 'Версия истории восстановления не поддерживается'
+                else:
+                    recovery_keys['recovery_episodes'] = EPISODE_KEYS
+                    if recovery_version == RECOVERY_RULE_VERSION:
+                        recovery_keys['recovery_history'] = HISTORY_KEYS
+                    try:
+                        recovery_raw = {name: (folder/(name+'.csv')).read_bytes() for name in recovery_keys}
+                    except OSError:
+                        recovery_reason = 'Не хватает сохранённых данных восстановления'
             exclusion_path = folder / 'candidate_exclusions.csv'
             exclusions = exclusion_path.read_bytes() if exclusion_path.exists() else None
             after = _guard(root)
@@ -169,8 +180,21 @@ def load_snapshot(root=ANALYSIS, day=None):
                 boards = summary.set_index('SECID').BOARDID
                 if not set(members.member_SECID).issubset(ids) or not members.member_BOARDID.eq(members.member_SECID.map(boards)).all():
                     raise DataUnavailable('Режим или идентификатор аналога не совпадает со сводкой')
-            if 'recovery_episodes' in tables:
-                _validate_recovery(tables, manifest)
+            if recovery_raw and not recovery_reason:
+                try:
+                    optional_tables = {name: _csv(value) for name, value in recovery_raw.items()}
+                    for name, frame in optional_tables.items():
+                        keys = recovery_keys[name]
+                        if not set(keys).issubset(frame) or frame[keys].isna().any().any() or frame.duplicated(keys).any():
+                            raise DataUnavailable('Пустой или повторный ключ: '+name)
+                        if not frame.analysis_date.eq(day).all():
+                            raise DataUnavailable('Смешаны даты восстановления')
+                        if any(field not in frame or not frame[field].eq(manifest.get(field)).all() for field in identity):
+                            raise DataUnavailable('Смешаны идентификаторы восстановления')
+                    tables.update(optional_tables)
+                    _validate_recovery(tables, manifest)
+                except (ValueError, KeyError, TypeError, OverflowError) as error:
+                    recovery_reason = 'История восстановления недоступна: '+str(error)
             if schema == 3:
                 _validate_anomalies(tables, manifest)
             exclusions_reason = ''
@@ -194,7 +218,7 @@ def load_snapshot(root=ANALYSIS, day=None):
             except (ValueError, OSError):
                 tables['candidate_exclusions'] = pd.DataFrame()
                 exclusions_reason = 'Не удалось прочитать причины исключения'
-            return Snapshot(manifest, tables, folder, legacy, exclusions_reason)
+            return Snapshot(manifest, tables, folder, legacy, exclusions_reason, recovery_reason)
         except PublicationBusy:
             if attempt == 2:
                 raise
@@ -239,7 +263,10 @@ def _validate_anomalies(tables, manifest):
                     raise DataUnavailable('Основание аномальности в сводке не совпадает с метриками')
 
 
-def _validate_recovery(tables, manifest):
+def _validate_recovery_v1(tables, manifest):
+    from moex_bonds.analysis.spread_recovery import (
+        LEGACY_SUMMARY_FIELDS as SUMMARY_FIELDS, LEGACY_EPISODE_COLUMNS as EPISODE_COLUMNS,
+        LEGACY_RECOVERY_RULE_VERSION as RECOVERY_RULE_VERSION, recovery_statistics_v1 as recovery_statistics)
     """Check saved recovery contracts, without recalculating spread histories."""
     summary, cases = tables['summary'], tables['recovery_episodes']
     if (not set(SUMMARY_FIELDS+['recovery_rule_version']).issubset(summary)
@@ -325,7 +352,7 @@ def _validate_recovery(tables, manifest):
             raise DataUnavailable('Неверный статус сводки восстановления')
 
 
-def recovery_view(snapshot, identity):
+def _recovery_view_v1(snapshot, identity):
     """Return saved recovery facts for one stable bond identity."""
     if 'recovery_rule_version' not in snapshot.manifest:
         return dict(status='not_saved', message='История восстановления не рассчитана',
@@ -1293,7 +1320,7 @@ def _render_members(st, snapshot, identity, window):
             st.dataframe(counts,hide_index=True)
 
 
-def _render_recovery(st, snapshot, identity):
+def _render_recovery_v1(st, snapshot, identity):
     st.subheader('История восстановления собственного спреда')
     view = recovery_view(snapshot, identity)
     if view['status'] == 'not_saved':
@@ -1353,6 +1380,277 @@ def _render_recovery(st, snapshot, identity):
             shown['hit_timing'] = shown.hit_timing.map({'complete_path':'Без пропусков до восстановления',
                 'after_gap':'Наблюдалось после пропуска', 'not_observed':'Не наблюдалось'})
             st.dataframe(style_table(shown.rename(columns=columns)), hide_index=True, width='stretch')
+
+
+def _validate_recovery(tables, manifest):
+    """Validate the optional saved section, keeping main analysis independent."""
+    version = manifest['recovery_rule_version']
+    cfg = manifest.get('config', {}).get('recovery')
+    if version == LEGACY_RECOVERY_RULE_VERSION:
+        validate_recovery_config_v1(cfg)
+        return _validate_recovery_v1(tables, manifest)
+    validate_recovery_config(cfg)
+    summary, cases, line = (tables[k] for k in ('summary', 'recovery_episodes', 'recovery_history'))
+    if not set(SUMMARY_FIELDS+['recovery_rule_version']).issubset(summary) or not set(EPISODE_COLUMNS).issubset(cases):
+        raise DataUnavailable('Не хватает полей истории восстановления')
+    if not {'z_bps','reason','recovery_rule_version'}.issubset(line):
+        raise DataUnavailable('Не хватает полей графика восстановления')
+    identities = set(map(tuple, summary[['SECID','BOARDID']].itertuples(index=False, name=None)))
+    for frame in (summary, cases, line):
+        if not frame.recovery_rule_version.eq(version).all():
+            raise DataUnavailable('Смешаны версии восстановления')
+        if not set(map(tuple,frame[['SECID','BOARDID']].itertuples(index=False,name=None))) <= identities:
+            raise DataUnavailable('Неизвестная бумага или режим восстановления')
+    day = manifest['analysis_date']
+    pd.to_datetime(line.observation_date, format='%Y-%m-%d', errors='raise')
+    line['z_bps'] = pd.to_numeric(line.z_bps, errors='raise')
+    if line.observation_date.gt(day).any() or np.isinf(line.z_bps).any():
+        raise DataUnavailable('Некорректная история восстановления')
+    numeric = [c for c in EPISODE_COLUMNS if c.endswith('_bps') or c.endswith('_pct') or c.endswith('_pp') or c in
+               ('reference_n_obs','initial_excess_scales','days_to_recovery','horizon_n_expected','horizon_n_valid')]
+    for field in numeric:
+        cases[field] = pd.to_numeric(cases[field], errors='raise')
+        if np.isinf(cases[field]).any():
+            raise DataUnavailable('Неконечное значение восстановления')
+    if not set(cases.outcome).issubset({'recovered','open','ended_without_observed_recovery'}):
+        raise DataUnavailable('Неизвестный исход восстановления')
+    def same(a,b):
+        return pd.isna(a) if b is None else pd.notna(a) and np.isclose(float(a),float(b),rtol=1e-9,atol=1e-9)
+    groups = {k: f.sort_values('observation_date') for k,f in line.groupby(['SECID','BOARDID'])}
+    for c in cases.to_dict('records'):
+        entry = pd.Timestamp(c['entry_date'])
+        deadline = (entry+pd.DateOffset(months=cfg['horizon_months'])).date().isoformat()
+        if (c['entry_date'] > day or c['horizon_end'] != deadline or c['scale_bps'] <= 0
+                or not same(c['target_bps'],recovery_target(c['reference_bps'],c['scale_bps'],cfg))
+                or not same(c['initial_excess_bps'],c['entry_z_bps']-c['reference_bps'])
+                or not same(c['initial_excess_scales'],c['initial_excess_bps']/c['scale_bps'])
+                or c['initial_excess_scales']+1e-12 < cfg['entry_scale']
+                or not cfg['min_observations'] <= c['reference_n_obs'] <= cfg['reference_window']):
+            raise DataUnavailable('Несогласованный ориентир восстановления')
+        if not c['reference_window_start'] <= c['reference_window_end'] < c['entry_date']:
+            raise DataUnavailable('Некорректное окно ориентира')
+        f = groups.get((c['SECID'],c['BOARDID']))
+        if f is None or not f.observation_date.eq(c['entry_date']).any():
+            raise DataUnavailable('Нет начала эпизода на графике')
+        if not same(f.loc[f.observation_date.eq(c['entry_date']),'z_bps'].iloc[0],c['entry_z_bps']):
+            raise DataUnavailable('Спред входа не совпадает с графиком')
+        if not c['entry_date'] <= c['observation_end_date'] <= day:
+            raise DataUnavailable('Неверный конец наблюдения')
+        forward = f[f.observation_date.gt(c['entry_date']) & f.observation_date.le(c['observation_end_date'])]
+        hits = forward[forward.z_bps.le(c['target_bps'])]
+        hit = hits.observation_date.iloc[0] if len(hits) else None
+        if (pd.notna(c['first_recovery_date']) != (hit is not None)
+                or (hit is not None and c['first_recovery_date'] != hit)
+                or (c['outcome']=='recovered') != (hit is not None)):
+            raise DataUnavailable('Достижение цели не совпадает с графиком')
+        path = forward[forward.observation_date.le(hit)] if hit else forward
+        complete = hit is not None and path.z_bps.notna().all()
+        timing = ('complete_path' if complete else 'after_gap') if hit else 'not_observed'
+        days = (pd.Timestamp(hit)-entry).days if complete else None
+        if c['hit_timing'] != timing or not same(c['days_to_recovery'],days):
+            raise DataUnavailable('Несогласованное время восстановления')
+        if not same(c['recovery_z_bps'],float(hits.z_bps.iloc[0]) if hit else None):
+            raise DataUnavailable('Спред достижения не совпадает с графиком')
+        within = c['recovered_within_horizon']
+        if hit and hit <= deadline and (pd.isna(within) or not within):
+            raise DataUnavailable('Подтверждённый возврат в срок не может иметь неизвестный результат')
+        if pd.notna(within):
+            if within:
+                if not hit or hit > deadline:
+                    raise DataUnavailable('Не подтверждён возврат за три месяца')
+            elif (deadline > day or (hit and hit <= deadline)
+                  or c['horizon_n_valid'] != c['horizon_n_expected']):
+                raise DataUnavailable('Не подтверждён невозврат за три месяца')
+            if pd.notna(c['horizon_reason']) and c['horizon_reason']:
+                raise DataUnavailable('Причина неизвестности при известном исходе')
+        elif c['horizon_reason'] not in ('not_due','missing_spread_within_horizon','maturity_within_horizon'):
+            raise DataUnavailable('Нет причины неизвестного трёхмесячного исхода')
+        elif ((c['horizon_reason']=='not_due' and deadline <= day)
+              or (c['horizon_reason']=='missing_spread_within_horizon'
+                  and (deadline > day or c['horizon_n_valid'] >= c['horizon_n_expected']))
+              or (c['horizon_reason']=='maturity_within_horizon'
+                  and (deadline > day or c['observation_end_reason']!='maturity'
+                       or c['outcome']!='ended_without_observed_recovery'
+                       or c['observation_end_date'] > deadline))):
+            raise DataUnavailable('Причина неизвестности противоречит наблюдениям')
+        for field in ('reference_n_obs','horizon_n_expected','horizon_n_valid'):
+            if pd.isna(c[field]) or c[field] < 0 or c[field] != int(c[field]):
+                raise DataUnavailable('Неверное число наблюдений')
+        if c['horizon_n_valid'] > c['horizon_n_expected']:
+            raise DataUnavailable('Неверное покрытие трёхмесячного периода')
+        p0,p1 = c['entry_waprice_pct'], c['recovery_waprice_pct']
+        if (pd.notna(p0) and p0<=0) or (pd.notna(p1) and p1<=0):
+            raise DataUnavailable('Неположительная цена')
+        expected_price = p1-p0 if pd.notna(p0) and pd.notna(p1) else None
+        if (pd.notna(p1) and not hit) or not same(c['price_change_pp'],expected_price):
+            raise DataUnavailable('Несогласованное изменение цены')
+        observed = path.z_bps.dropna()
+        if not same(c['max_worsening_bps'],max(0.,float(observed.max()-c['entry_z_bps'])) if len(observed) else None):
+            raise DataUnavailable('Несогласованное дальнейшее расширение')
+    for row in summary.to_dict('records'):
+        sub = cases[cases.SECID.eq(row['SECID']) & cases.BOARDID.eq(row['BOARDID'])]
+        stats = recovery_statistics(sub)
+        if any(not same(row['recovery__'+field],value) for field,value in stats.items()):
+            raise DataUnavailable('Сводка восстановления не совпадает с эпизодами')
+        if (len(sub) and row['recovery__status'] != 'available') or (not len(sub) and row['recovery__status'] not in ('no_cases','unavailable')):
+            raise DataUnavailable('Неверный статус сводки восстановления')
+
+
+def recovery_view(snapshot, identity):
+    if snapshot.recovery_reason:
+        return dict(status='unavailable',message=snapshot.recovery_reason,criterion='',summary=None,
+                    episodes=pd.DataFrame(),history=pd.DataFrame())
+    if snapshot.manifest.get('recovery_rule_version') != RECOVERY_RULE_VERSION:
+        view = _recovery_view_v1(snapshot,identity)
+        if snapshot.manifest.get('recovery_rule_version') == LEGACY_RECOVERY_RULE_VERSION:
+            view['criterion'] = 'Прежняя методология: '+view['criterion']
+        view['history'] = pd.DataFrame()
+        return view
+    selected = snapshot.tables['summary']
+    selected = selected[selected.SECID.eq(identity[0]) & selected.BOARDID.eq(identity[1])]
+    if selected.empty:
+        raise DataUnavailable('Бумаги нет в сводке восстановления')
+    row = selected.iloc[0]
+    cfg = snapshot.manifest['config']['recovery']
+    cases = snapshot.tables['recovery_episodes']
+    cases = cases[cases.SECID.eq(identity[0]) & cases.BOARDID.eq(identity[1])].copy()
+    history = snapshot.tables['recovery_history']
+    history = history[history.SECID.eq(identity[0]) & history.BOARDID.eq(identity[1])].copy()
+    return dict(status=row['recovery__status'],summary=row,episodes=cases,history=history,
+        criterion=f"Цель: медиана + {number(cfg['target_scale'],2)} × 1,4826 × MAD. Ориентир: {cfg['reference_window']} предыдущих торговых дат, фиксируется при начале.",
+        message=f"Цели достигли {int(row['recovery__n_recovered'])} из {int(row['recovery__n_episodes'])} найденных расширений. Достижение учитывается сразу.")
+
+
+def build_recovery_spec(history, episodes, selected=None):
+    """A saved own-spread line, with gaps kept in every highlighted segment."""
+    frame = history.sort_values('observation_date').copy()
+    base = _records(frame[['observation_date','z_bps']])
+    x = {'field':'observation_date','type':'temporal','title':None,
+         'axis':{'format':'%d.%m','tickCount':8,'labelAngle':0}}
+    y = {'field':'z_bps','type':'quantitative','title':'Z-спред, б.п.','scale':{'zero':False}}
+    labels = {'recovered':'Достиг цели','open':'Открытое расширение',
+              'ended_without_observed_recovery':'Погашен без наблюдаемого возврата'}
+    colors = {'Достиг цели':'#6FC7A7','Открытое расширение':'#F2BC66',
+              'Погашен без наблюдаемого возврата':'#B1A2D8'}
+    segments,marks,deadlines,refs = [],[],[],[]
+    for c in episodes.to_dict('records'):
+        hit = c.get('first_recovery_date')
+        has_hit = pd.notna(hit)
+        end = hit if has_hit else c['observation_end_date']
+        segment = frame[frame.observation_date.between(c['entry_date'],end)]
+        title = labels[c['outcome']]
+        common = dict(entry_date=c['entry_date'],state=title,target_bps=c['target_bps'],reference_bps=c['reference_bps'],
+            selected=selected==c['entry_date'],timing='Первая дата неизвестна: есть пропуск' if c['hit_timing']=='after_gap' else 'Подтверждённый путь',
+            price_change_pp=c.get('price_change_pp'),days=c.get('days_to_recovery'))
+        for field in ('entry_waprice_pct','recovery_waprice_pct'):
+            common[field] = float(c[field]) if pd.notna(c.get(field)) else None
+        within = c.get('recovered_within_horizon')
+        common['horizon_label'] = ('Достиг цели в срок' if within else 'Не восстановился за три месяца') if pd.notna(within) else (
+            'Три месяца ещё не прошли' if c.get('horizon_reason')=='not_due' else 'Неизвестно: неполные наблюдения')
+        for r in _records(segment[['observation_date','z_bps']]): segments.append(dict(**r,**common))
+        marks.append(dict(**common,observation_date=c['entry_date'],z_bps=c['entry_z_bps'],event='Начало',shape='triangle-up',filled=True))
+        if has_hit:
+            marks.append(dict(**common,observation_date=hit,z_bps=c['recovery_z_bps'],
+                event='Цель наблюдалась после пропуска' if c['hit_timing']=='after_gap' else 'Восстановление',
+                shape='circle',filled=c['hit_timing']=='complete_path'))
+        within=c.get('recovered_within_horizon')
+        if pd.notna(within) and not within:
+            deadlines.append(dict(date=c['horizon_end'],label='Три месяца без возврата',entry=c['entry_date']))
+        if selected==c['entry_date']:
+            for value,label in [(c['reference_bps'],'Медиана при начале'),(c['target_bps'],'Цель восстановления')]:
+                refs.append(dict(start=c['entry_date'],end=end,value=value,label=label))
+    present = [label for label in colors if any(s['state']==label for s in segments)]
+    color={'field':'state','type':'nominal','scale':{'domain':present,'range':[colors[label] for label in present]},
+           'legend':{'title':None,'orient':'bottom','direction':'vertical','labelLimit':350}}
+    tooltip=[{'field':'observation_date','type':'temporal','title':'Дата','format':'%d.%m.%Y'},
+        {'field':'z_bps','title':'Спред, б.п.','format':'.2f'},{'field':'entry_date','title':'Начало'},
+        {'field':'reference_bps','title':'Медиана при начале','format':'.2f'},
+        {'field':'target_bps','title':'Цель, б.п.','format':'.2f'},{'field':'timing','title':'Качество времени'},
+        {'field':'entry_waprice_pct','title':'WAPRICE начала, % номинала','format':'.2f'},
+        {'field':'recovery_waprice_pct','title':'WAPRICE наблюдения, % номинала','format':'.2f'},
+        {'field':'horizon_label','title':'Результат за три месяца'},
+        {'field':'days','title':'Точное время, дней'},{'field':'price_change_pp','title':'Цена до наблюдения цели, п.п.','format':'+.2f'}]
+    layers=[{'data':{'values':base},'mark':{'type':'line','color':'#758396','strokeWidth':1.5,'invalid':'break-paths-show-domains'},'encoding':{'x':x,'y':y,
+                'tooltip':[{'field':'observation_date','type':'temporal','title':'Дата'},{'field':'z_bps','title':'Спред, б.п.'}]}},
+        {'data':{'values':segments},'mark':{'type':'line','invalid':'break-paths-show-domains'},'encoding':{'x':x,'y':y,'color':color,
+                'detail':{'field':'entry_date'},'strokeWidth':{'condition':{'test':'datum.selected','value':4},'value':2.5},'tooltip':tooltip}}]
+    for filled in (True,False):
+        layers.append({'data':{'values':[m for m in marks if m['filled']==filled]},
+            'mark':{'type':'point','filled':filled,'size':105,'strokeWidth':2},
+            'encoding':{'x':x,'y':y,'color':color,'shape':{'field':'shape','type':'nominal','scale':None,'legend':None},
+                        'tooltip':[{'field':'event','title':'Событие'}]+tooltip}})
+    if deadlines:
+        layers.append({'data':{'values':deadlines},'mark':{'type':'rule','strokeDash':[2,5],'color':'#F2BC66','opacity':.65},
+            'encoding':{'x':{'field':'date','type':'temporal'},'tooltip':[{'field':'label','title':'Отметка'},{'field':'entry','title':'Начало эпизода'}]}})
+    if refs:
+        layers.append({'data':{'values':refs},'mark':{'type':'rule','strokeDash':[5,4],'color':'#B1BECF'},
+            'encoding':{'x':{'field':'start','type':'temporal'},'x2':{'field':'end'},'y':{'field':'value','type':'quantitative'},
+                        'tooltip':[{'field':'label','title':'Ориентир'},{'field':'value','title':'б.п.','format':'.2f'}]}})
+    return {'$schema':'https://vega.github.io/schema/vega-lite/v6.json','height':300,'layer':layers,'config':DARK_CHART}
+
+
+def _render_recovery(st, snapshot, identity):
+    view = recovery_view(snapshot, identity)
+    if view['summary'] is None:
+        st.subheader('История восстановления собственного спреда')
+        st.caption(view['message'])
+        return
+    if snapshot.manifest.get('recovery_rule_version') == LEGACY_RECOVERY_RULE_VERSION:
+        _render_recovery_v1(st,snapshot,identity)
+        st.caption('График и цены новой методологии не сохранены для этого снимка.')
+        return
+    st.subheader('История восстановления собственного спреда')
+    st.caption(view['criterion'])
+    st.write(view['message'])
+    row = view['summary']
+    labels=['Расширений','Достигли цели','Время · медиана','Цена · медиана','Расширение · медиана']
+    values=[str(int(row['recovery__n_episodes'])),str(int(row['recovery__n_recovered'])),
+        number(row['recovery__median_days'],1)+' дней',number(row['recovery__median_price_change_pp'],2,True)+' п.п.',
+        number(row['recovery__median_worsening_bps'],1)+' б.п.']
+    for col,label,value,n in zip(st.columns(5),labels,values,[None,None,'n_days','n_price','n_worsening']):
+        with col,st.container(border=True):
+            st.metric(label,value)
+            st.caption(f"n = {int(row['recovery__'+n])}" if n else
+                       'Начала расширений' if label=='Расширений' else 'Включая ранние возвраты')
+    st.caption(f"Открыто: {int(row['recovery__n_open'])} · Погашено без наблюдаемого возврата: {int(row['recovery__n_ended'])}")
+    st.caption('Цена — изменение WAPRICE в п.п. номинала: 92 → 95 = +3 п.п., без купонов и НКД. '
+               'Медианы рассчитаны по восстановившимся с точной датой; для цены нужны обе цены. '
+               'Новый вход допускается после возврата к исходной медиане.')
+    cases = view['episodes'].sort_values('entry_date').reset_index(drop=True)
+    selected = None
+    if len(cases):
+        columns={'entry_date':'Начало','target_bps':'Цель, б.п.','first_recovery_date':'Цель наблюдалась',
+            'hit_timing':'Качество даты','days_to_recovery':'Точное время, дней',
+            'entry_waprice_pct':'WAPRICE начала, % номинала','recovery_waprice_pct':'WAPRICE наблюдения, % номинала',
+            'price_change_pp':'Цена до наблюдения цели, п.п.','horizon_end':'Три месяца от начала',
+            'recovered_within_horizon':'Возврат за три месяца','outcome':'Состояние'}
+        shown=cases[list(columns)].copy()
+        shown.hit_timing=shown.hit_timing.map({'complete_path':'Первая дата известна','after_gap':'После пропуска: первая дата неизвестна','not_observed':'Цель не наблюдалась'})
+        shown.outcome=shown.outcome.map({'recovered':'Восстановился','open':'Открыт','ended_without_observed_recovery':'Погашен без наблюдаемого возврата'})
+        shown.recovered_within_horizon=[('Да' if v else 'Нет') if pd.notna(v) else
+            ('Срок ещё не прошёл' if c.horizon_end>snapshot.manifest['analysis_date'] else 'Неизвестно: неполные наблюдения')
+            for v,c in zip(cases.recovered_within_horizon,cases.itertuples())]
+        event=st.dataframe(style_table(shown.rename(columns=columns)),hide_index=True,width='stretch',
+            on_select='rerun',selection_mode='single-row',key='recovery_cases_'+str(identity)+'_'+snapshot.manifest['analysis_run_id'])
+        positions=_selection(event).get('rows',[])
+        if positions: selected=cases.iloc[positions[0]].entry_date
+        st.caption('Выберите строку, чтобы выделить эпизод и его фиксированные ориентиры на графике.')
+    history=view['history']
+    if len(history):
+        st.vega_lite_chart(build_recovery_spec(history,cases,selected),width='stretch',
+            alt='Собственный Z-спред с участками расширения, треугольниками начала и кругами достижения цели. Полые круги означают пропуски до наблюдения.')
+        st.caption('Сохранённая история: '+history.observation_date.min()+' — '+history.observation_date.max()+
+            '. Треугольник — начало; круг — цель; полый круг — цель после пропуска. Разрывы не заполнены.')
+        if cases.empty: st.caption('Расширений по заданному правилу не найдено.')
+    else:
+        st.caption('График восстановления не сохранён.')
+    with st.expander('Возврат за три месяца — отдельная статистика'):
+        known=int(row['recovery__n_mature_known']); hits=int(row['recovery__n_mature_recovered_3m'])
+        st.write(f'Восстановились за три месяца: {hits} из {known} случаев с установленным результатом.')
+        if known<5: st.caption('Малая выборка: менее 5 известных трёхмесячных результатов.')
+        elif pd.notna(row['recovery__share_3m']): st.write(number(100*row['recovery__share_3m'],1)+'%')
+        st.caption(f"Среди достаточно старых случаев неизвестен результат: {int(row['recovery__n_mature_unknown'])}. "
+                   f"Более свежих случаев: {int(row['recovery__n_recent'])}. Это описание истории, а не прогноз.")
 
 
 if __name__ == '__main__':

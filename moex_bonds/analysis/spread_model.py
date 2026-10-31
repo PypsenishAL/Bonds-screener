@@ -44,6 +44,8 @@ def load_config(path=None):
         def merge(target, source):
             if not isinstance(source, dict):
                 raise ValueError('Конфиг должен быть объектом JSON')
+            if 'recovery_fraction' in source:
+                raise ValueError('recovery_fraction относится к прежней методологии; используйте target_scale')
             unknown = source.keys() - target.keys()
             if unknown:
                 raise ValueError('Неизвестные настройки: ' + ', '.join(sorted(unknown)))

@@ -28,7 +28,7 @@ def data_mode(environ=None):
         raise ValueError('BONDS_DATA_MODE must be local or published')
     return mode
 
-def allowed(day, curve):
+def allowed(day, curve, schema=1):
     from datetime import date
     if date.fromisoformat(day).isoformat() != day:
         raise ValueError('Invalid publication date')
@@ -36,6 +36,10 @@ def allowed(day, curve):
              'daily_data/_support/cbr_zcyc_status.json', 'spread_analysis/run_manifest.json',
              f'spread_analysis/snapshots/{day}/run_manifest.json'}
     names.update(f'spread_analysis/snapshots/{day}/{name}.csv' for name in TABLES)
+    if schema == 2:
+        names.add(f'spread_analysis/snapshots/{day}/recovery_history.csv')
+    elif schema != 1:
+        raise ValueError('Unsupported publication schema')
     if curve:
         names.add('daily_data/cbr_zcyc.csv')
     return names
@@ -58,7 +62,8 @@ def safe_file(root, name):
 def validate_bundle(root):
     root = Path(root)
     m = read_json(root/'publication_manifest.json')
-    if m.get('publication_schema_version') != 1 or m.get('status') != 'ok':
+    schema = m.get('publication_schema_version')
+    if schema not in (1, 2) or m.get('status') != 'ok':
         raise ValueError('Incomplete publication')
     if not {'analysis_date','source_statuses','source_bindings','files','analysis_run_id','total_size_bytes'}.issubset(m):
         raise ValueError('Missing publication metadata')
@@ -66,7 +71,7 @@ def validate_bundle(root):
     status = m['source_statuses']['cbr_zcyc']
     if status['status'] not in ('ok', 'unavailable', 'error') or status['trade_date'] != day:
         raise ValueError('Invalid CBR status')
-    expected = allowed(day, status['status'] == 'ok')
+    expected = allowed(day, status['status'] == 'ok', schema)
     if set(m['files']) != expected:
         raise ValueError('Unexpected bundle file list')
     actual = {str(p.relative_to(root)).replace('\\','/') for p in root.rglob('*') if p.is_file()}
@@ -81,9 +86,15 @@ def validate_bundle(root):
     if total != m['total_size_bytes']:
         raise ValueError('Bundle size mismatch')
     analysis = read_json(root/f'spread_analysis/snapshots/{day}/run_manifest.json')
+    recovery_version = analysis.get('recovery_rule_version')
+    if ((schema == 1 and recovery_version == 'own_spread_recovery_v2')
+            or (schema == 2 and recovery_version in (None, 'own_spread_recovery_v1'))):
+        raise ValueError('Publication schema and recovery version differ')
     for marker in (analysis, read_json(root/'spread_analysis/run_manifest.json')):
         if marker.get('status') != 'ok' or marker.get('analysis_date') != day or marker.get('analysis_run_id') != m['analysis_run_id']:
             raise ValueError('Mixed analysis publications')
+        if marker.get('recovery_rule_version') != recovery_version:
+            raise ValueError('Mixed recovery versions in publication markers')
     binding = m['source_bindings']['daily_workbook']
     if binding['path'] != 'daily_data/daily/bonds_daily.xlsx' or analysis['source_sha256'].get(binding['source_key']) != binding['sha256'] or m['files'][binding['path']]['sha256'] != binding['sha256']:
         raise ValueError('Invalid workbook binding')
@@ -110,7 +121,8 @@ def build_bundle(daily, analysis, destination):
     if hashes.get(direct) != digest:
         key = str(PROJECT_DIR / book.resolve().relative_to(PROJECT_DIR/'data'))
     status = read_json(daily/'_support/cbr_zcyc_status.json')
-    names = allowed(day, status['status'] == 'ok')
+    schema = 2 if source.get('recovery_rule_version') == 'own_spread_recovery_v2' else 1
+    names = allowed(day, status['status'] == 'ok', schema)
     destination.mkdir(parents=True, exist_ok=False)
     files = {}
     for name in sorted(names):
@@ -123,7 +135,7 @@ def build_bundle(daily, analysis, destination):
         if before != file_hash(dst) or before != file_hash(src):
             raise ValueError('Source changed while copying')
         files[name] = {'sha256': before, 'size_bytes': dst.stat().st_size}
-    m = dict(publication_schema_version=1, status='ok', analysis_date=day,
+    m = dict(publication_schema_version=schema, status='ok', analysis_date=day,
              analysis_run_id=source['analysis_run_id'], files=files,
              source_bindings={'daily_workbook':dict(path='daily_data/daily/bonds_daily.xlsx', source_key=key, sha256=digest)},
              source_statuses={'cbr_zcyc':status}, total_size_bytes=sum(v['size_bytes'] for v in files.values()))

@@ -12,7 +12,7 @@ import pandas as pd
 from moex_bonds.storage.daily_storage import checked_child, checked_output, output_lock
 from moex_bonds.analysis.spread_model import DIRECTIONS
 from moex_bonds.analysis.spread_classification import CANDIDATE_KEYS, CANDIDATE_FIELDS
-from moex_bonds.analysis.spread_recovery import EPISODE_KEYS
+from moex_bonds.analysis.spread_recovery import EPISODE_KEYS, HISTORY_KEYS
 
 
 BASE_KEYS = {
@@ -21,7 +21,7 @@ BASE_KEYS = {
     'comparison_history': ['analysis_date', 'observation_date', 'SECID', 'comparison'],
     'metrics': ['analysis_date', 'SECID', 'comparison', 'window'],
 }
-KEYS = dict(BASE_KEYS, recovery_episodes=EPISODE_KEYS)
+KEYS = dict(BASE_KEYS, recovery_episodes=EPISODE_KEYS, recovery_history=HISTORY_KEYS)
 
 
 def file_hash(path):
@@ -80,7 +80,7 @@ def write_csv(frame, path):
     """CSV booleans are lowercase, including legacy boolean cells after merging."""
     frame = frame.copy()
     boolean_fields = {'calendar_confirmed', 'upper_tail_anomaly', 'robust_anomaly', 'candidate_qualified',
-                      'structured', 'liquidity_omitted'}
+                      'structured', 'liquidity_omitted', 'recovered_within_horizon'}
     for column in frame.columns:
         if column in boolean_fields or any(column.endswith('__' + field) for field in boolean_fields):
             def boolean_cell(value):
