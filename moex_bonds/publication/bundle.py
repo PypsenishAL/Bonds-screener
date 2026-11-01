@@ -95,6 +95,8 @@ def validate_bundle(root):
             raise ValueError('Mixed analysis publications')
         if marker.get('recovery_rule_version') != recovery_version:
             raise ValueError('Mixed recovery versions in publication markers')
+        if marker.get('investing_rule_version') != analysis.get('investing_rule_version'):
+            raise ValueError('Mixed investing versions in publication markers')
     binding = m['source_bindings']['daily_workbook']
     if binding['path'] != 'daily_data/daily/bonds_daily.xlsx' or analysis['source_sha256'].get(binding['source_key']) != binding['sha256'] or m['files'][binding['path']]['sha256'] != binding['sha256']:
         raise ValueError('Invalid workbook binding')
@@ -102,6 +104,9 @@ def validate_bundle(root):
     curve = read_json(root/'daily_data/_support/cbr_zcyc_status.json')
     if daily.get('collection_status') != 'ok' or daily['trade_date'] != day or curve != status or daily.get('cbr_zcyc') != status:
         raise ValueError('Mixed daily/CBR data')
+    import pandas as pd
+    from moex_bonds.analysis.spread_investing import validate_saved
+    validate_saved(pd.read_csv(root/f'spread_analysis/snapshots/{day}/summary.csv'),analysis)
     return m
 
 def build_bundle(daily, analysis, destination):

@@ -26,6 +26,9 @@ from moex_bonds.analysis.spread_recovery import (RECOVERY_RULE_VERSION, EPISODE_
                              HISTORY_KEYS, validate_recovery_config_v1, recovery_target)
 
 from moex_bonds.paths import PROJECT_DIR, DAILY_DIR, ANALYSIS_DIR, recorded_source_hash
+from moex_bonds.analysis.spread_investing import validate_saved as validate_investing
+from moex_bonds.ui.investing import (mode_defaults, add_investing_labels, investing_view, sort_investing,
+    render_card as render_investing_card, GROUPS as INVESTING_GROUPS, LABELS as INVESTING_LABELS)
 
 ROOT = PROJECT_DIR
 ANALYSIS = ANALYSIS_DIR
@@ -163,6 +166,7 @@ def load_snapshot(root=ANALYSIS, day=None):
                     elif field not in frame or not frame[field].notna().all() or not frame[field].eq(manifest.get(field)).all():
                         raise DataUnavailable('Смешаны идентификаторы расчёта: '+name)
             summary, metrics, history = (tables[n] for n in ('summary','metrics','comparison_history'))
+            validate_investing(summary,manifest)
             if summary.empty or metrics.empty or history.empty or len(summary) != manifest.get('instruments'):
                 raise DataUnavailable('Неполный набор результатов')
             if 'BOARDID' not in summary or summary.BOARDID.isna().any():
@@ -502,7 +506,8 @@ def candidate_view(snapshot, window, enrichment=None):
     frame['z_history_30'] = frame.SECID.map(spark).map(lambda values:values if isinstance(values,list) else [])
     frame['z_sparkline'] = frame.z_history_30.map(spread_sparkline)
     for name in ('YTM_WAPRICE','MATDATE','COUPONPERCENT','COUPONVALUE','WAPRICE','ACCINT'):
-        frame[name] = pd.NaT if name == 'MATDATE' else np.nan
+        if name not in frame:
+            frame[name] = pd.NaT if name == 'MATDATE' else np.nan
     if enrichment is not None and not enrichment.empty:
         right = enrichment.copy()
         left_keys = ['SECID','BOARDID']
@@ -512,7 +517,9 @@ def candidate_view(snapshot, window, enrichment=None):
             if name in right:
                 frame[name] = right[name].reindex(index).to_numpy()
     frame['MATDATE'] = pd.to_datetime(frame.MATDATE, errors='coerce')
-    return frame
+    for name in ('YTM_WAPRICE','COUPONPERCENT','COUPONVALUE','WAPRICE','ACCINT'):
+        frame[name] = pd.to_numeric(frame[name], errors='coerce')
+    return add_investing_labels(frame)
 
 
 def filter_view(frame, filters):
@@ -607,6 +614,7 @@ LABELS = {
     'anomaly_label':'Критерий аномальности'}
 COMMON = ['NAME','anomaly_label','status_label','RATING','DURATION_YEARS','z_bps','z_sparkline','self_delta','peers_delta','market_delta','issuer_delta','basis_label']
 MODE_COLUMNS = {'Торговля':['adv20','change_1d_bps'], 'Инвестирование':['YTM_WAPRICE','MATDATE','COUPONPERCENT']}
+LABELS.update(INVESTING_LABELS)
 REASONS = {
     'missing_zspreadatwaprice':'Нет подтверждённого Z-спреда по средневзвешенной цене',
     'missing_confirmed_target_spread':'Нет подтверждённого спреда бумаги',
@@ -712,6 +720,11 @@ def style_table(frame):
             if text.endswith(','): text += '0'
         return text
     formats = {c:(lambda v,c=c:rounded(v,c)) for c in numeric}
+    for c in ('investing__score','investing__premium_bps','investing__ordinary_premium_bps'):
+        if c in frame: formats[c] = lambda v:number(v,1)
+    for c in ('investing__rank','investing__cohort_size','investing__n_issuers','investing__narrow_n_issuers'):
+        if c in frame: formats[c] = lambda v:number(v,0 if pd.notna(v) and float(v).is_integer() else 1)
+    if 'YTM_WAPRICE' in frame: formats['YTM_WAPRICE'] = lambda v:number(v,2)
     if 'basis_label' in frame:
         formats['basis_label'] = lambda v:v.replace('По аналогам','Аналоги').replace('По эмитенту','Эмитент').replace('Нет полного вывода по эмитенту','эмитент: нет вывода').replace('Нет полного вывода по аналогам','аналоги: нет вывода')
     for c in ('adv20','VALUE_RUB','member_adv20','Оборот 20 дат, ₽'):
@@ -982,6 +995,8 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     dates = _available_dates(analysis)
     st.subheader('Анализ облигаций')
     mode = st.segmented_control('Режим',list(MODE_COLUMNS),default='Торговля',required=True,key='mode',label_visibility='collapsed')
+    mode_defaults(state,mode)
+    investing_mode = mode == 'Инвестирование'
     if not dates:
         st.info('Нет завершённых сохранённых анализов. Подготовьте данные существующими командами проекта.')
         return
@@ -993,8 +1008,13 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     context_line = st.empty()
     toolbar = st.container(horizontal=True,vertical_alignment='center')
     with toolbar:
-        signals = st.segmented_control('Список',['Выделены анализом','Все выпуски'],default='Выделены анализом',required=True,
-                                      key='list_scope',label_visibility='collapsed') == 'Выделены анализом'
+        if investing_mode:
+            signals = False
+            investment_group = st.selectbox('Рейтинговая категория',INVESTING_GROUPS,key='investing_group')
+            all_maturities = st.toggle('Все сроки погашения',value=False,key='investing_all_maturities',help='Основной список: погашение через 1–7 лет. Расширение включает длинные выпуски и не меняет баллы.')
+        else:
+            signals = st.segmented_control('Список',['Выделены анализом','Все выпуски'],default=None if 'list_scope' in state else 'Выделены анализом',required=True,
+                                          key='list_scope',label_visibility='collapsed') == 'Выделены анализом'
         filter_slot = st.container(width='content')
         if len(dates)>1:
             parameters = st.popover('Дата анализа',key='analysis_parameters')
@@ -1025,12 +1045,26 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     with toolbar:
         if state.get('window') not in windows:
             state['window'] = snapshot.manifest['config'].get('classification',{}).get('primary_window', windows[0])
-        window = st.segmented_control('Окно, торговых дат',windows,required=True,key='window')
-    context_line.caption(f'Данные за {pd.Timestamp(day):%d.%m.%Y} · окно {window} торговых дат')
+        if investing_mode:
+            window = state['window']
+            state['window'] = window
+        else:
+            window = st.segmented_control('Окно, торговых дат',windows,required=True,key='window')
+    context_line.caption(f'Данные за {pd.Timestamp(day):%d.%m.%Y}'+(' · удержание до погашения' if investing_mode else f' · окно {window} торговых дат'))
     enrichment, enrichment_reason = load_enrichment(snapshot, daily, publication=publication)
     book_path = Path(daily)/'daily'/'bonds_daily.xlsx'
     book_stamp = file_stamp(book_path) if book_path.exists() else None
     full = cached_candidates((str(Path(analysis).resolve()),day,fingerprint,str(book_path.resolve()),book_stamp,enrichment_reason),window,snapshot,enrichment)
+    if investing_mode:
+        st.caption('Удержание до погашения · баллы сравниваются только внутри выбранной категории. Премия — доплата к аналогам, а не обещанная прибыль.')
+        min_ytm = st.number_input('Минимальный YTM, % годовых',min_value=0.,step=.5,key='investing_min_ytm')
+        if not snapshot.manifest.get('investing_rule_version'):
+            st.info('В этом снимке инвестиционный расчёт ещё не сохранён. Торговый сигнал не заменяет инвестиционный рейтинг.')
+        full = investing_view(full,day,investment_group,all_maturities,min_ytm)
+        with st.expander('Как читать инвестиционный список'):
+            st.write('Сначала выпуски с устойчивой доплатой, затем без подтверждённой доплаты, предварительные результаты и ограничения. Сортировка внутри статусов — по устойчивой премии. Требующие проверки выпуски не становятся лидерами из-за высокого YTM.')
+            st.write('Устойчивая премия — наименьшая доплата, сохраняющаяся при двух способах расчёта ориентира, удалении любого одного эмитента и диапазонах дюрации ±1 и ±1,5 года. Основной допуск: та же точная рейтинговая ступень.')
+            st.write('Оценка 0–100 показывает положение премии внутри категории до фильтров. При числе оценённых бумаг меньше 10 выводится только место. YTM — расчётная доходность до погашения при выполнении предпосылок; балл не оценивает надёжность.')
     options = {}
     unavailable = {}
     for field,key in [('candidate_status','status'),('RATING','rating'),('SECTOR','sector'),('ISSUER','issuer')]:
@@ -1053,6 +1087,9 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
     with filter_slot.popover(f'Фильтры ({active_count})',key='browsing_filters'):
         filters['search'] = st.text_input('Найти бумагу',key='filter_search',placeholder='Название, SECID, эмитент')
         for key,label in [('status','Статус отбора'),('rating','Рейтинг'),('sector','Сектор'),('issuer','Эмитент')]:
+            if investing_mode and key in ('status','rating'):
+                filters[key] = None
+                continue
             chosen = st.multiselect(label,options[key],default=[],key='filter_'+key,placeholder='Все',
                 help='Пустой список означает все значения.',
                 disabled=key == 'status' and signals,
@@ -1072,26 +1109,34 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         if signals: st.caption('В этом списке показаны только выделенные анализом бумаги; статусный фильтр сохранён для всех выпусков.')
         st.button('Сбросить фильтры',on_click=reset_filters,width='stretch',key='reset_filters')
     background, filtered = browsing_views(full,filters,signals)
-    sort_options = [name for name in LABELS if name in full and name != 'z_sparkline']
+    sort_options = [name for name in LABELS if name in full and name != 'z_sparkline'
+                    and (investing_mode or name not in INVESTING_LABELS)]
     sort_summary = st.empty()
     controls = toolbar
     with controls.popover('Сортировка',key='sorting_controls'):
         sort_field = st.selectbox('Сортировать по',sort_options,key='sort_field',format_func=lambda f:LABELS[f])
         sort_ascending = st.radio('Порядок',[True,False],format_func=lambda value:'По возрастанию' if value else 'По убыванию',horizontal=True,key='sort_ascending')
     base = [c for c in COMMON if not (signals and c == 'status_label')]+MODE_COLUMNS[mode]
+    if investing_mode:
+        base = ['NAME','RATING','investing_status_label','investing__score','investing__rank',
+                'investing__premium_bps','YTM_WAPRICE','MATDATE','DURATION_YEARS','z_bps',
+                'investing__n_issuers','investing_reason_label']
     with controls.popover('Колонки'):
         profile = st.segmented_control('Профиль',['Минимум','Стандарт','Всё'],default='Стандарт',required=True,key='column_profile')
         extra = st.multiselect('Дополнительные', [c for c in LABELS if c in full and c not in base],
             format_func=lambda f:LABELS[f], key='columns_'+mode)
     if profile == 'Минимум': base = ['NAME','RATING','z_bps','peers_delta']+MODE_COLUMNS[mode][:1]
-    elif profile == 'Всё': base = [c for c in LABELS if c in full and not (signals and c == 'status_label')]
+    if profile == 'Минимум' and investing_mode:
+        base = ['NAME','RATING','investing_status_label','investing__premium_bps','YTM_WAPRICE','MATDATE']
+    elif profile == 'Всё': base = [c for c in LABELS if c in full and not (signals and c == 'status_label')
+                                   and (investing_mode or c not in INVESTING_LABELS)]
     columns = list(dict.fromkeys(base+extra))
-    view = sort_view(filtered, sort_field, sort_ascending)
+    view = sort_investing(filtered, sort_field, sort_ascending) if investing_mode else sort_view(filtered, sort_field, sort_ascending)
     sort_name = 'Отклонение премии к аналогам' if sort_field == 'peers_delta' else LABELS[sort_field]
     sort_summary.caption(f'Показано {len(view)} из {len(full)} · {sort_name} '+('↑' if sort_ascending else '↓'),
                          help='Отклонение текущей премии к аналогам от её исторической медианы.' if sort_field == 'peers_delta' else None)
     unsaved = int(full.candidate_status.eq('not_saved').sum())
-    if 0 < unsaved < len(full):
+    if not investing_mode and 0 < unsaved < len(full):
         st.caption(f'Для {unsaved} из {len(full)} выпусков статус не сохранён')
     cfg = {}
     for field in columns:
@@ -1101,7 +1146,7 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
         elif field == 'anomaly_label':
             cfg[field] = st.column_config.TextColumn('Критерий аномальности', width='medium',
                 help='Оба — два критерия; Robust — только robust score; Процент. — только процентиль; Разные — выводы направлений различаются; * — часть направлений недоступна. Полная расшифровка — в карточке и вкладке «Расчёт».')
-        elif field in ['NAME','status_label','RATING','SECID','ISSUER','SECTOR','basis_label']:
+        elif field in ['NAME','status_label','RATING','SECID','ISSUER','SECTOR','basis_label','investing_status_label','investing_reason_label']:
             cfg[field] = st.column_config.TextColumn(LABELS[field],pinned=field == 'NAME',width='small' if field in ('basis_label','status_label') else None)
         else:
             help_text = f'Отклонение от исторической медианы за {window} торговых дат; положительное значение — выше медианы.' if field.endswith('_delta') else None
@@ -1135,6 +1180,22 @@ def render_app(analysis=ANALYSIS, daily=DAILY, publication=None):
             if st.query_params.get(key) != url_state[key]: st.query_params[key] = url_state[key]
         elif key in st.query_params: del st.query_params[key]
     st.divider()
+    if investing_mode:
+        if identity is None:
+            st.caption('Выберите облигацию в таблице, чтобы открыть инвестиционные показатели и аналоги.')
+            leaders = view.loc[view['investing__status'].eq('relative_advantage')].head(3)
+            st.markdown('**Устойчивая доплата · категория '+investment_group+'**')
+            if leaders.empty: st.info('В текущем списке нет выпусков с подтверждённой устойчивой доплатой. Ограниченные и предварительные сравнения остаются видимыми.')
+            for _,item in leaders.iterrows():
+                st.caption(str(item.NAME)+' · '+number(item['investing__premium_bps'],signed=True)+' б.п.')
+        elif selected.empty:
+            st.info('Выбранная бумага вне текущей категории или диапазона погашения. Выберите выпуск в таблице.')
+        else:
+            row=selected.iloc[0]
+            st.subheader(str(row.NAME))
+            st.caption(f'{row.SECID} · {row.ISSUER} · {row.RATING} · YTM: {number(row.YTM_WAPRICE,2)}% · дюрация: {number(row.DURATION_YEARS,2)} лет')
+            render_investing_card(st,row,number)
+        return
     if identity is None:
         st.caption('Выберите облигацию в таблице или на диаграмме, чтобы открыть подробности.')
         leaders = sort_view(full[full.candidate_status.eq('candidate')],'peers_delta',False).head(3)

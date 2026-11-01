@@ -1,0 +1,35 @@
+{
+  "temperature": 1.0,
+  "windows": [90, 150],
+  "min_observations": 30,
+  "recovery": {
+    "reference_window": 90,
+    "min_observations": 60,
+    "entry_scale": 1.0,
+    "target_scale": 0.25,
+    "horizon_months": 3
+  },
+  "classification": {
+    "primary_window": 90,
+    "percentile_threshold": 90,
+    "min_ordinary_observations": 60,
+    "robust_score_threshold": 3.5
+  },
+  "min_weight_coverage": 0.8,
+  "duration_unit_years": 0.5,
+  "mad_scale": 1.4826,
+  "issuer_aliases": {
+    "РЖД": "РЖД ОАО",
+    "ТГК-14": "ПАО \"ТГК-14\"",
+    "iКаршеринг Руссия": "Каршеринг Руссия",
+    "ПАО \"ПСБ\"": "Промсвязьбанк",
+    "СберИОС": "Сбербанк ПАО"
+  },
+  "structured_issuers": ["СберИОС", "Инвестиционные облигации"],
+  "structured_secids": [],
+  "baskets": {
+    "issuer": {"aR": 0.0, "aD": 1.0, "aS": 0.0, "aL": 0.25, "max_duration_diff": 1.0, "max_rating_diff": null, "max_members": 10},
+    "peers": {"aR": 1.5, "aD": 1.0, "aS": 0.75, "aL": 0.25, "max_duration_diff": 1.5, "max_rating_diff": 1, "max_members": 10},
+    "market": {"aR": 1.5, "aD": 1.0, "aS": 0.0, "aL": 0.0, "max_duration_diff": 1.5, "max_rating_diff": 1, "max_members": null}
+  }
+}

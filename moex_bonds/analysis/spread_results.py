@@ -44,7 +44,8 @@ def validate_output(output, sources):
 def build_summary(daily, metrics, candidates, config):
     fields = ['SECID', 'NAME', 'ISSUER', 'RATING', 'SECTOR', 'BOARDID', 'TRADEDATE',
               'TRADE_STATUS', 'DATA_GAPS', 'SMARTLAB_AT', 'ZSPREADATWAPRICE', 'DURATION_YEARS',
-              'VALUE_RUB', 'adv20', 'adv_source', 'adv_n_values', 'adv_last_value_date', 'structured']
+              'VALUE_RUB', 'adv20', 'adv_source', 'adv_n_values', 'adv_last_value_date', 'structured',
+              'YTM_WAPRICE','MATDATE','COUPONPERCENT','COUPONVALUE','WAPRICE','ACCINT']
     summary = daily[[f for f in fields if f in daily]].copy()
     summary.insert(0, 'analysis_date', daily.TRADEDATE.iloc[0])
     index = metrics.set_index(['analysis_date', 'SECID', 'comparison', 'window'], verify_integrity=True)

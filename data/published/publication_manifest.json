@@ -1,6 +1,6 @@
 {
   "analysis_date": "2026-10-30",
-  "analysis_run_id": "ebab0c87a4dd4e5f834986f1916da8a3",
+  "analysis_run_id": "1e5ea132f81a47348440978abee34299",
   "files": {
     "daily_data/_support/cbr_zcyc_status.json": {
       "sha256": "fb551d8825e28712e69619319ace922634a15c6267f6d424211efcfc39de7336",
@@ -19,40 +19,40 @@
       "size_bytes": 6842
     },
     "spread_analysis/run_manifest.json": {
-      "sha256": "a817d65d261f85d210cfafc99947838f33a9a3c8ab8678e2f206ba7caa682bc2",
-      "size_bytes": 23826
+      "sha256": "78e26e9ec9556bab4ffdd794f7776ccf4ac4d675c620819a69b4ba7c2211a9c6",
+      "size_bytes": 24551
     },
     "spread_analysis/snapshots/2026-10-30/basket_members.csv": {
-      "sha256": "7c308fb7e2bf318fc90cfcbb765d23be625431b8f8fea80be940f602ebcec01e",
+      "sha256": "1cddd53cfe46979445a0f4e2b42fb36fe8512db7af339db7d9bfe5b7b746d443",
       "size_bytes": 4173762
     },
     "spread_analysis/snapshots/2026-10-30/candidate_exclusions.csv": {
-      "sha256": "107e5dc8943881e0b8fb40e099bd92e5187b749bf046b52138cb849abfbd12c4",
+      "sha256": "bb7cde74bb4b2004f5148fe8b80c85ab4be475172c8508d1b0863f56ea74f719",
       "size_bytes": 14387126
     },
     "spread_analysis/snapshots/2026-10-30/comparison_history.csv": {
-      "sha256": "1c96975668f70b81e68b807c9391a4a41dd7bed3dd40eb9d4d044e30618a5a37",
+      "sha256": "34da44698c0ffef4b50a38b23f06a3c8623c06a727a55fa3020c387a7003fc01",
       "size_bytes": 20876898
     },
     "spread_analysis/snapshots/2026-10-30/metrics.csv": {
-      "sha256": "c33f445f22a411a5accebd4008eb5696e8fd168e84786b18537057c3eed44829",
+      "sha256": "df26d88424d818c655a2ee7b32753ead0d8bf448ef66a470ad03ef2e606cab48",
       "size_bytes": 905497
     },
     "spread_analysis/snapshots/2026-10-30/recovery_episodes.csv": {
-      "sha256": "8a6786b0e7163f3c3068e37fd2f5a613b7f4dec57ab6db474b363f2020735b9d",
+      "sha256": "284a93f67a03fd9b0a9dc0e1176826143618b23faa4165ba863cac7b67c679d6",
       "size_bytes": 127206
     },
     "spread_analysis/snapshots/2026-10-30/recovery_history.csv": {
-      "sha256": "5c0566c5f72e7240f16c12a2abea845ae649ba2d98e9f539b06c645bb5b720e0",
+      "sha256": "14aeed184f8c25d113738e810ad5e11d04e1d66d9bb46043d1b457ddd950f599",
       "size_bytes": 4245652
     },
     "spread_analysis/snapshots/2026-10-30/run_manifest.json": {
-      "sha256": "a817d65d261f85d210cfafc99947838f33a9a3c8ab8678e2f206ba7caa682bc2",
-      "size_bytes": 23826
+      "sha256": "78e26e9ec9556bab4ffdd794f7776ccf4ac4d675c620819a69b4ba7c2211a9c6",
+      "size_bytes": 24551
     },
     "spread_analysis/snapshots/2026-10-30/summary.csv": {
-      "sha256": "82fd692cbd735834366fe4c2b244cf3357a56bbbb54f0b9871fe5e4b0c9b02a8",
-      "size_bytes": 478311
+      "sha256": "8ab4f2d8fe560bafd285bb5c45159e6ac2e56fff4250b573d4014ab7a76d85d6",
+      "size_bytes": 1121469
     }
   },
   "publication_schema_version": 2,
@@ -83,5 +83,5 @@
     }
   },
   "status": "ok",
-  "total_size_bytes": 45437492
+  "total_size_bytes": 46082100
 }

@@ -1,0 +1,68 @@
+[
+  {
+    "day": "2026-10-27",
+    "comparison_count": 164,
+    "base_quality": 125,
+    "narrow_available": 109,
+    "stable_positive": 40,
+    "groups": [
+      {
+        "group": "A",
+        "n": 45,
+        "top5_overlap": 5,
+        "stable_positive": 18
+      },
+      {
+        "group": "AA",
+        "n": 11,
+        "top5_overlap": 4,
+        "stable_positive": 2
+      },
+      {
+        "group": "AAA",
+        "n": 45,
+        "top5_overlap": 5,
+        "stable_positive": 11
+      },
+      {
+        "group": "BBB",
+        "n": 24,
+        "top5_overlap": 4,
+        "stable_positive": 9
+      }
+    ]
+  },
+  {
+    "day": "2026-10-30",
+    "comparison_count": 152,
+    "base_quality": 109,
+    "narrow_available": 98,
+    "stable_positive": 37,
+    "groups": [
+      {
+        "group": "A",
+        "n": 37,
+        "top5_overlap": 4,
+        "stable_positive": 17
+      },
+      {
+        "group": "AA",
+        "n": 11,
+        "top5_overlap": 4,
+        "stable_positive": 3
+      },
+      {
+        "group": "AAA",
+        "n": 40,
+        "top5_overlap": 5,
+        "stable_positive": 10
+      },
+      {
+        "group": "BBB",
+        "n": 21,
+        "top5_overlap": 4,
+        "stable_positive": 7
+      }
+    ]
+  }
+]
