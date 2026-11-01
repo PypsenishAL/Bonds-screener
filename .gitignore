@@ -16,6 +16,7 @@
 /docs/investing-ranking/*
 !/docs/investing-ranking/refined_methodology.md
 !/docs/investing-ranking/README.md
+!/docs/investing-ranking/ranking_audit.md
 !/docs/investing-ranking/validate_methodology.py
 !/docs/investing-ranking/summarize_validation.py
 !/docs/investing-ranking/validation/
@@ -27,6 +28,7 @@
 !/tests/__init__.py
 !/tests/test_spread_investing.py
 !/tests/test_investing_view.py
+!/tests/test_investing_saved_math.py
 !/tests/test_streamlit_app.py
 !/data/
 !/moex_bonds/

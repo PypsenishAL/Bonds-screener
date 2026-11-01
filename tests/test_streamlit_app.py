@@ -798,7 +798,7 @@ class ViewerTests(unittest.TestCase):
         at.segmented_control(key='mode').set_value('Инвестирование').run(timeout=30)
         self.assertFalse(at.exception)
         self.assertIn('YTM_WAPRICE', at.dataframe[0].value.columns)
-        self.assertEqual(at.session_state['sort_field'],'investing__premium_bps')
+        self.assertEqual(at.session_state['sort_field'],'investing_selection_rank')
 
 
 if __name__ == '__main__':
